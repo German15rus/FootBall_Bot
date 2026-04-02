@@ -1,0 +1,23 @@
+# Build output
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+*.user
+
+# Sensitive config — токены здесь, не пушить!
+src/PremierLeagueBot/appsettings.json
+src/PremierLeagueBot/appsettings.Production.json
+
+# Logs and DB
+logs/
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
