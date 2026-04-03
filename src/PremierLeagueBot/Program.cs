@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using PremierLeagueBot.Data;
 using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Background;
@@ -26,10 +27,7 @@ try
     builder.Host.UseSerilog();
 
     // ── Configuration binding ────────────────────────────────────────────────
-    var botToken = builder.Configuration["BotToken"]
-        ?? throw new InvalidOperationException(
-            "BotToken is not configured. Set it in appsettings.json or as an env var.");
-
+    var botToken = "8632451769:AAFVS9WSs0XU5N5uBdkwC8aY1DXEYKY-j5E";
     builder.Services.Configure<FootballApiOptions>(
         builder.Configuration.GetSection(FootballApiOptions.Section));
 
@@ -42,11 +40,16 @@ try
     builder.Services
         .AddHttpClient<IFootballApiClient, FootballApiClient>((sp, client) =>
         {
-            var opts = builder.Configuration
-                .GetSection(FootballApiOptions.Section)
-                .Get<FootballApiOptions>()!;
+            var opts = sp.GetRequiredService<IOptions<FootballApiOptions>>().Value;
+            if (string.IsNullOrWhiteSpace(opts.BaseUrl))
+                throw new InvalidOperationException(
+                    $"Configuration section '{FootballApiOptions.Section}:BaseUrl' is missing.");
 
-            client.BaseAddress = new Uri(opts.BaseUrl);
+            if (!Uri.TryCreate(opts.BaseUrl, UriKind.Absolute, out var baseUri))
+                throw new InvalidOperationException(
+                    $"Invalid '{FootballApiOptions.Section}:BaseUrl': '{opts.BaseUrl}'.");
+
+            client.BaseAddress = baseUri;
             client.DefaultRequestHeaders.UserAgent.ParseAdd(
                 "PremierLeagueBot/1.0 (+https://github.com/your/repo)");
             client.Timeout = TimeSpan.FromSeconds(20);

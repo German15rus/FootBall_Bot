@@ -1,22 +1,39 @@
 # Build output
 bin/
 obj/
+out/
+publish/
+.tmpbuild/
 
-# IDE
+# .NET
+*.pdb
+*.cache
+*.tmp
+TestResults/
+*.nupkg
+*.snupkg
+
+# IDE and editor
 .vs/
 .vscode/
+.idea/
+*.suo
 *.user
+*.userosscache
+*.sln.docstates
 
-# Sensitive config — токены здесь, не пушить!
+# Sensitive local config (tokens/secrets)
 src/PremierLeagueBot/appsettings.json
 src/PremierLeagueBot/appsettings.Production.json
 
-# Logs and DB
+# Logs and local databases
 logs/
 *.log
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 
 # OS
 .DS_Store

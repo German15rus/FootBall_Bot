@@ -61,11 +61,19 @@ public sealed class DataUpdateService(
         using var scope    = scopeFactory.CreateScope();
         var football       = scope.ServiceProvider.GetRequiredService<IFootballApiClient>();
         var db             = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var knownTeamIds   = (await db.Teams.Select(t => t.TeamId).ToListAsync(ct)).ToHashSet();
 
         // 1. Upsert standings → teams table
         var standings = await football.GetStandingsAsync(ct);
         foreach (var s in standings)
         {
+            if (s.TeamId <= 0)
+            {
+                logger.LogWarning("Skipping standing row with invalid TeamId={TeamId}", s.TeamId);
+                continue;
+            }
+
+            knownTeamIds.Add(s.TeamId);
             var existing = await db.Teams.FindAsync([s.TeamId], ct);
             if (existing is null)
             {
@@ -92,6 +100,17 @@ public sealed class DataUpdateService(
 
         foreach (var m in matches)
         {
+            if (m.MatchId <= 0 || m.HomeTeamId <= 0 || m.AwayTeamId <= 0)
+            {
+                logger.LogWarning(
+                    "Skipping invalid match payload: MatchId={MatchId}, Home={HomeTeamId}, Away={AwayTeamId}",
+                    m.MatchId, m.HomeTeamId, m.AwayTeamId);
+                continue;
+            }
+
+            EnsureTeamExists(db, knownTeamIds, m.HomeTeamId, m.HomeTeamName);
+            EnsureTeamExists(db, knownTeamIds, m.AwayTeamId, m.AwayTeamName);
+
             var existing = await db.Matches.FindAsync([m.MatchId], ct);
             if (existing is null)
             {
@@ -109,6 +128,10 @@ public sealed class DataUpdateService(
             }
             else
             {
+                existing.HomeTeamId = m.HomeTeamId;
+                existing.AwayTeamId = m.AwayTeamId;
+                existing.MatchDate  = m.MatchDate;
+                existing.Stadium    = m.Stadium;
                 existing.HomeScore = m.HomeScore;
                 existing.AwayScore = m.AwayScore;
                 existing.Status    = m.Status;
@@ -166,5 +189,31 @@ public sealed class DataUpdateService(
         }
 
         logger.LogInformation("Squad sync complete");
+    }
+
+    private static void EnsureTeamExists(
+        AppDbContext db,
+        HashSet<int> knownTeamIds,
+        int teamId,
+        string teamName)
+    {
+        if (knownTeamIds.Contains(teamId))
+            return;
+
+        var safeName = string.IsNullOrWhiteSpace(teamName) ? $"Team {teamId}" : teamName.Trim();
+        db.Teams.Add(new Team
+        {
+            TeamId = teamId,
+            Name = safeName,
+            ShortName = ToShortName(safeName)
+        });
+
+        knownTeamIds.Add(teamId);
+    }
+
+    private static string ToShortName(string teamName)
+    {
+        var normalized = teamName.Trim().ToUpperInvariant();
+        return normalized.Length <= 3 ? normalized : normalized[..3];
     }
 }
