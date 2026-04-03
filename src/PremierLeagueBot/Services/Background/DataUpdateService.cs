@@ -6,32 +6,34 @@ using PremierLeagueBot.Services.Football;
 namespace PremierLeagueBot.Services.Background;
 
 /// <summary>
-/// Background service that periodically syncs data from the external Football API
-/// into the local SQLite/PostgreSQL database.
+/// Background service that periodically syncs data from the external Football API.
 ///
 /// Schedule:
-///   - Standings + Matches: every 10 minutes
-///   - Squads:              once per day (offset to avoid API rate limits)
+///   - Standings (teams): every 3 hours  — table rarely changes mid-day
+///   - Matches:           every 10 min   — scores and statuses change during game-days
+///   - Squads:            every 24 hours — squad changes are rare
 /// </summary>
 public sealed class DataUpdateService(
     IServiceScopeFactory scopeFactory,
     ILogger<DataUpdateService> logger) : BackgroundService
 {
-    private static readonly TimeSpan MatchInterval  = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan SquadInterval  = TimeSpan.FromHours(24);
+    private static readonly TimeSpan StandingsInterval = TimeSpan.FromHours(3);
+    private static readonly TimeSpan MatchInterval     = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan SquadInterval     = TimeSpan.FromHours(24);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("DataUpdateService started");
 
-        // Stagger tasks so they don't hit the API simultaneously on startup
-        var matchTask = RunOnIntervalAsync("Matches+Standings", MatchInterval,
-            SyncMatchesAndStandingsAsync, TimeSpan.Zero, stoppingToken);
-
-        var squadTask = RunOnIntervalAsync("Squads", SquadInterval,
-            SyncSquadsAsync, TimeSpan.FromMinutes(2), stoppingToken);
-
-        await Task.WhenAll(matchTask, squadTask);
+        // Run all three loops in parallel, staggered so they don't hit the API at once
+        await Task.WhenAll(
+            RunOnIntervalAsync("Standings", StandingsInterval,
+                SyncStandingsAsync,  initialDelay: TimeSpan.Zero,          ct: stoppingToken),
+            RunOnIntervalAsync("Matches",   MatchInterval,
+                SyncMatchesAsync,    initialDelay: TimeSpan.FromSeconds(5), ct: stoppingToken),
+            RunOnIntervalAsync("Squads",    SquadInterval,
+                SyncSquadsAsync,     initialDelay: TimeSpan.FromMinutes(2), ct: stoppingToken)
+        );
     }
 
     private static async Task RunOnIntervalAsync(
@@ -39,7 +41,7 @@ public sealed class DataUpdateService(
         TimeSpan interval,
         Func<CancellationToken, Task> action,
         TimeSpan initialDelay,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         await Task.Delay(initialDelay, ct);
         while (!ct.IsCancellationRequested)
@@ -54,37 +56,27 @@ public sealed class DataUpdateService(
         }
     }
 
-    // ── Sync matches + standings ─────────────────────────────────────────────
+    // ── Sync standings → teams table (every 3 h) ────────────────────────────
 
-    private async Task SyncMatchesAndStandingsAsync(CancellationToken ct)
+    private async Task SyncStandingsAsync(CancellationToken ct)
     {
-        using var scope    = scopeFactory.CreateScope();
-        var football       = scope.ServiceProvider.GetRequiredService<IFootballApiClient>();
-        var db             = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var knownTeamIds   = (await db.Teams.Select(t => t.TeamId).ToListAsync(ct)).ToHashSet();
+        using var scope  = scopeFactory.CreateScope();
+        var football     = scope.ServiceProvider.GetRequiredService<IFootballApiClient>();
+        var db           = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        // 1. Upsert standings → teams table
         var standings = await football.GetStandingsAsync(ct);
+        if (standings.Count == 0)
+        {
+            logger.LogWarning("SyncStandings: received empty standings, skipping");
+            return;
+        }
+
         foreach (var s in standings)
         {
-            if (s.TeamId <= 0)
-            {
-                logger.LogWarning("Skipping standing row with invalid TeamId={TeamId}", s.TeamId);
-                continue;
-            }
-
-            knownTeamIds.Add(s.TeamId);
+            if (s.TeamId <= 0) continue;
             var existing = await db.Teams.FindAsync([s.TeamId], ct);
             if (existing is null)
-            {
-                db.Teams.Add(new Team
-                {
-                    TeamId    = s.TeamId,
-                    Name      = s.TeamName,
-                    ShortName = s.ShortName,
-                    EmblemUrl = s.EmblemUrl
-                });
-            }
+                db.Teams.Add(new Team { TeamId = s.TeamId, Name = s.TeamName, ShortName = s.ShortName, EmblemUrl = s.EmblemUrl });
             else
             {
                 existing.Name      = s.TeamName;
@@ -93,18 +85,28 @@ public sealed class DataUpdateService(
             }
         }
 
-        // 2. Upsert upcoming + recent matches (±30 days window)
-        var from    = DateTime.UtcNow.AddDays(-30);
-        var to      = DateTime.UtcNow.AddDays(30);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Synced {Count} teams from standings", standings.Count);
+    }
+
+    // ── Sync matches (every 10 min) ──────────────────────────────────────────
+
+    private async Task SyncMatchesAsync(CancellationToken ct)
+    {
+        using var scope    = scopeFactory.CreateScope();
+        var football       = scope.ServiceProvider.GetRequiredService<IFootballApiClient>();
+        var db             = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var knownTeamIds   = (await db.Teams.Select(t => t.TeamId).ToListAsync(ct)).ToHashSet();
+
+        var from    = DateTime.UtcNow.AddDays(-7);
+        var to      = DateTime.UtcNow.AddDays(14);
         var matches = await football.GetMatchesAsync(from, to, ct);
 
         foreach (var m in matches)
         {
             if (m.MatchId <= 0 || m.HomeTeamId <= 0 || m.AwayTeamId <= 0)
             {
-                logger.LogWarning(
-                    "Skipping invalid match payload: MatchId={MatchId}, Home={HomeTeamId}, Away={AwayTeamId}",
-                    m.MatchId, m.HomeTeamId, m.AwayTeamId);
+                logger.LogWarning("Skipping invalid match {MatchId}", m.MatchId);
                 continue;
             }
 
@@ -128,10 +130,6 @@ public sealed class DataUpdateService(
             }
             else
             {
-                existing.HomeTeamId = m.HomeTeamId;
-                existing.AwayTeamId = m.AwayTeamId;
-                existing.MatchDate  = m.MatchDate;
-                existing.Stadium    = m.Stadium;
                 existing.HomeScore = m.HomeScore;
                 existing.AwayScore = m.AwayScore;
                 existing.Status    = m.Status;
@@ -139,8 +137,7 @@ public sealed class DataUpdateService(
         }
 
         await db.SaveChangesAsync(ct);
-        logger.LogInformation("Synced {Teams} teams, {Matches} matches",
-            standings.Count, matches.Count);
+        logger.LogInformation("Synced {Count} matches", matches.Count);
     }
 
     // ── Sync squads ──────────────────────────────────────────────────────────

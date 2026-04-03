@@ -10,279 +10,352 @@ using PremierLeagueBot.Models.Api;
 namespace PremierLeagueBot.Services.Football;
 
 /// <summary>
-/// Football data from TheSportsDB (free, no registration required).
-/// News from BBC Sport EPL RSS feed (free, no registration required).
-///
-/// TheSportsDB docs: https://www.thesportsdb.com/api.php
-/// EPL league ID: 4328
+/// Data sources:
+///   Standings, matches, squad → TheSportsDB (free, no key)
+///   News                     → BBC Sport EPL RSS (free, no key)
 /// </summary>
 public sealed class FootballApiClient(
     HttpClient http,
     IMemoryCache cache,
     IOptions<FootballApiOptions> opts,
+    PremierLeagueApiClient plClient,
     ILogger<FootballApiClient> logger) : IFootballApiClient
 {
     private readonly FootballApiOptions _opts = opts.Value;
 
-    private static readonly JsonSerializerOptions JsonOpts =
-        new() { PropertyNameCaseInsensitive = true };
-
-    // ── Cache helper ─────────────────────────────────────────────────────────
+    // ── Cache ─────────────────────────────────────────────────────────────────
 
     private async Task<T> GetCachedAsync<T>(
         string key, TimeSpan ttl,
         Func<CancellationToken, Task<T>> factory,
         CancellationToken ct)
     {
-        if (cache.TryGetValue(key, out T? cached) && cached is not null)
-            return cached;
+        if (cache.TryGetValue(key, out T? hit) && hit is not null) return hit;
         var result = await factory(ct);
         cache.Set(key, result, ttl);
         return result;
     }
 
-    // ── Public interface ─────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────────
 
     public Task<IReadOnlyList<StandingDto>> GetStandingsAsync(CancellationToken ct = default)
-        => GetCachedAsync("standings", TimeSpan.FromMinutes(15), FetchStandingsAsync, ct);
+        => GetCachedAsync("standings", TimeSpan.FromHours(3), FetchStandingsWithFallbackAsync, ct);
 
-    public Task<IReadOnlyList<MatchDto>> GetMatchesAsync(
-        DateTime from, DateTime to, CancellationToken ct = default)
-        => GetCachedAsync(
-            $"matches:{from:yyyyMMdd}:{to:yyyyMMdd}",
-            TimeSpan.FromMinutes(10),
-            c => FetchMatchesInRangeAsync(from, to, c), ct);
+    public Task<IReadOnlyList<MatchDto>> GetMatchesAsync(DateTime from, DateTime to, CancellationToken ct = default)
+        => GetCachedAsync($"matches:{from:yyyyMMdd}:{to:yyyyMMdd}", TimeSpan.FromMinutes(10),
+            c => FetchMatchesWithFallbackAsync(from, to, c), ct);
 
     public Task<IReadOnlyList<PlayerDto>> GetTeamSquadAsync(int teamId, CancellationToken ct = default)
-        => GetCachedAsync(
-            $"squad:{teamId}",
-            TimeSpan.FromHours(24),
-            c => FetchSquadAsync(teamId, c), ct);
+        => GetCachedAsync($"squad:{teamId}", TimeSpan.FromHours(24),
+            c => FetchSquadWithFallbackAsync(teamId, c), ct);
 
-    public Task<IReadOnlyList<MatchDto>> GetRecentMatchesAsync(
-        int teamId, int count = 5, CancellationToken ct = default)
-        => GetCachedAsync(
-            $"recent:{teamId}",
-            TimeSpan.FromMinutes(15),
-            c => FetchLastTeamMatchesAsync(teamId, count, c), ct);
+    public Task<IReadOnlyList<MatchDto>> GetRecentMatchesAsync(int teamId, int count = 5, CancellationToken ct = default)
+        => GetCachedAsync($"recent:{teamId}", TimeSpan.FromMinutes(15),
+            c => FetchRecentWithFallbackAsync(teamId, count, c), ct);
 
-    public Task<IReadOnlyList<NewsDto>> GetNewsAsync(
-        int? teamId = null, CancellationToken ct = default)
-        => GetCachedAsync(
-            $"news:{teamId}",
-            TimeSpan.FromHours(1),
+    public Task<IReadOnlyList<NewsDto>> GetNewsAsync(int? teamId = null, CancellationToken ct = default)
+        => GetCachedAsync($"news:{teamId}", TimeSpan.FromHours(1),
             c => FetchNewsAsync(teamId, c), ct);
 
-    // ── Standings (TheSportsDB lookuptable) ──────────────────────────────────
+    // ── Standings ─────────────────────────────────────────────────────────────
     // GET /lookuptable.php?l=4328&s=2024-2025
 
     private async Task<IReadOnlyList<StandingDto>> FetchStandingsAsync(CancellationToken ct)
     {
-        var url = $"lookuptable.php?l={_opts.LeagueId}&s={Uri.EscapeDataString(_opts.Season)}";
-        using var resp = await http.GetAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-
-        var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-
-        if (!root.TryGetProperty("table", out var table) || table.ValueKind == JsonValueKind.Null)
+        try
         {
-            logger.LogWarning("TheSportsDB standings returned null table");
+            var url  = $"lookuptable.php?l={_opts.LeagueId}&s={Uri.EscapeDataString(_opts.Season)}";
+            var root = await GetJsonAsync(url, ct);
+            if (root is null) return [];
+
+            if (!root.Value.TryGetProperty("table", out var table)
+                || table.ValueKind == JsonValueKind.Null)
+            {
+                logger.LogWarning("TheSportsDB standings: null table for season {Season}", _opts.Season);
+                return [];
+            }
+
+            var result = new List<StandingDto>();
+            int rank = 1;
+            foreach (var item in table.EnumerateArray())
+            {
+                var teamId   = ParseInt(item, "idTeam");
+                var gf       = ParseInt(item, "intGoalsFor");
+                var ga       = ParseInt(item, "intGoalsAgainst");
+                var teamName = GetStr(item, "strTeam");
+                var badge    = GetStrNullable(item, "strTeamBadge");
+
+                result.Add(new StandingDto(
+                    Rank:           rank++,
+                    TeamId:         teamId,
+                    TeamName:       teamName,
+                    ShortName:      teamName.Length >= 3 ? teamName[..3].ToUpper() : teamName.ToUpper(),
+                    EmblemUrl:      badge,
+                    Played:         ParseInt(item, "intPlayed"),
+                    Won:            ParseInt(item, "intWin"),
+                    Drawn:          ParseInt(item, "intDraw"),
+                    Lost:           ParseInt(item, "intLoss"),
+                    GoalsFor:       gf,
+                    GoalsAgainst:   ga,
+                    GoalDifference: gf - ga,
+                    Points:         ParseInt(item, "intPoints")
+                ));
+            }
+
+            logger.LogInformation("Fetched {Count} standings", result.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to fetch standings");
             return [];
         }
-
-        var result = new List<StandingDto>();
-        int rank = 1;
-        foreach (var item in table.EnumerateArray())
-        {
-            var teamId   = ParseInt(item, "idTeam");
-            var played   = ParseInt(item, "intPlayed");
-            var won      = ParseInt(item, "intWin");
-            var drawn    = ParseInt(item, "intDraw");
-            var lost     = ParseInt(item, "intLoss");
-            var gf       = ParseInt(item, "intGoalsFor");
-            var ga       = ParseInt(item, "intGoalsAgainst");
-            var points   = ParseInt(item, "intPoints");
-            var teamName = item.TryGetProperty("strTeam", out var tn) ? tn.GetString() ?? "" : "";
-            var badge    = item.TryGetProperty("strTeamBadge", out var b) ? b.GetString() : null;
-
-            result.Add(new StandingDto(
-                Rank:           rank++,
-                TeamId:         teamId,
-                TeamName:       teamName,
-                ShortName:      teamName.Length >= 3 ? teamName[..3].ToUpper() : teamName.ToUpper(),
-                EmblemUrl:      badge,
-                Played:         played,
-                Won:            won,
-                Drawn:          drawn,
-                Lost:           lost,
-                GoalsFor:       gf,
-                GoalsAgainst:   ga,
-                GoalDifference: gf - ga,
-                Points:         points
-            ));
-        }
-
-        logger.LogInformation("Fetched {Count} standings from TheSportsDB", result.Count);
-        return result;
     }
 
-    // ── Matches in date range (next + past league events merged) ─────────────
-    // GET /eventsnextleague.php?id=4328
-    // GET /eventspastleague.php?id=4328
+    private async Task<IReadOnlyList<StandingDto>> FetchStandingsWithFallbackAsync(CancellationToken ct)
+    {
+        var plStandings = await plClient.GetStandingsAsync(ct);
+        if (plStandings.Count > 0)
+        {
+            logger.LogInformation("Using PL API standings: {Count} teams", plStandings.Count);
+            return plStandings;
+        }
+
+        logger.LogWarning("PL API standings empty, falling back to TheSportsDB");
+        return await FetchStandingsAsync(ct);
+    }
+
+    // ── Matches in date range ─────────────────────────────────────────────────
+    // Merges upcoming + past league events, then filters by date
 
     private async Task<IReadOnlyList<MatchDto>> FetchMatchesInRangeAsync(
         DateTime from, DateTime to, CancellationToken ct)
     {
-        var nextTask = FetchLeagueEventsAsync("eventsnextleague.php", ct);
-        var pastTask = FetchLeagueEventsAsync("eventspastleague.php", ct);
-        await Task.WhenAll(nextTask, pastTask);
+        try
+        {
+            var nextTask = FetchLeagueEventsAsync("eventsnextleague.php", ct);
+            var pastTask = FetchLeagueEventsAsync("eventspastleague.php", ct);
+            await Task.WhenAll(nextTask, pastTask);
 
-        var all = nextTask.Result.Concat(pastTask.Result)
-            .DistinctBy(m => m.MatchId)
-            .Where(m => m.MatchDate >= from && m.MatchDate <= to)
-            .OrderBy(m => m.MatchDate)
-            .ToList();
+            return nextTask.Result
+                .Concat(pastTask.Result)
+                .DistinctBy(m => m.MatchId)
+                .Where(m => m.MatchDate >= from && m.MatchDate <= to)
+                .OrderBy(m => m.MatchDate)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to fetch matches");
+            return [];
+        }
+    }
 
-        return all;
+    private async Task<IReadOnlyList<MatchDto>> FetchMatchesWithFallbackAsync(
+        DateTime from, DateTime to, CancellationToken ct)
+    {
+        var plMatches = await plClient.GetLeagueMatchesAsync(from, to, ct);
+        if (plMatches.Count > 0)
+        {
+            logger.LogInformation("Using PL API matches: {Count} in range", plMatches.Count);
+            return plMatches;
+        }
+
+        logger.LogWarning("PL API matches empty, falling back to TheSportsDB");
+        return await FetchMatchesInRangeAsync(from, to, ct);
     }
 
     private async Task<IReadOnlyList<MatchDto>> FetchLeagueEventsAsync(
         string endpoint, CancellationToken ct)
     {
-        var url = $"{endpoint}?id={_opts.LeagueId}";
-        using var resp = await http.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode) return [];
-
-        var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-        var key  = endpoint.Contains("next") ? "events" : "events";
-
-        if (!root.TryGetProperty("events", out var events) || events.ValueKind == JsonValueKind.Null)
-            return [];
-
+        var root = await GetJsonAsync($"{endpoint}?id={_opts.LeagueId}", ct);
+        if (root is null) return [];
+        if (!root.Value.TryGetProperty("events", out var events)
+            || events.ValueKind == JsonValueKind.Null) return [];
         return ParseEvents(events);
     }
 
-    // ── Last N matches for a team ─────────────────────────────────────────────
-    // GET /eventslast.php?id={teamId}
+    // ── Recent matches for a specific team ────────────────────────────────────
+    // Primary:  GET /eventslast.php?id={teamId}   → returns "results" array
+    // Fallback: filter past league events by teamId
 
-    private async Task<IReadOnlyList<MatchDto>> FetchLastTeamMatchesAsync(
+    private async Task<IReadOnlyList<MatchDto>> FetchRecentTeamMatchesAsync(
         int teamId, int count, CancellationToken ct)
     {
-        var url = $"eventslast.php?id={teamId}";
-        using var resp = await http.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode) return [];
+        try
+        {
+            // Primary attempt
+            var primary = await FetchEventslastAsync(teamId, ct);
+            if (primary.Count > 0)
+                return primary.TakeLast(count).ToList();
 
-        var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            logger.LogWarning("eventslast.php returned empty for team {TeamId}, using fallback", teamId);
 
-        if (!root.TryGetProperty("results", out var results) || results.ValueKind == JsonValueKind.Null)
+            // Fallback: filter past league events
+            var past = await FetchLeagueEventsAsync("eventspastleague.php", ct);
+            return past
+                .Where(m => m.HomeTeamId == teamId || m.AwayTeamId == teamId)
+                .OrderByDescending(m => m.MatchDate)
+                .Take(count)
+                .Reverse()
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to fetch recent matches for team {TeamId}", teamId);
             return [];
-
-        return ParseEvents(results).TakeLast(count).ToList();
+        }
     }
 
-    // ── Squad (TheSportsDB lookup_all_players) ────────────────────────────────
+    private async Task<IReadOnlyList<MatchDto>> FetchEventslastAsync(int teamId, CancellationToken ct)
+    {
+        var root = await GetJsonAsync($"eventslast.php?id={teamId}", ct);
+        if (root is null) return [];
+        if (!root.Value.TryGetProperty("results", out var results)
+            || results.ValueKind == JsonValueKind.Null) return [];
+        return ParseEvents(results);
+    }
+
+    // ── Squad with PL API → TheSportsDB fallback ─────────────────────────────
+
+    private async Task<IReadOnlyList<PlayerDto>> FetchSquadWithFallbackAsync(
+        int teamId, CancellationToken ct)
+    {
+        // Resolve team name so PL API can look up its internal team ID
+        var teamName = await ResolveTeamNameFromStandingsAsync(teamId, ct);
+
+        if (!string.IsNullOrEmpty(teamName))
+        {
+            var plSquad = await plClient.GetSquadAsync(teamName, teamId, ct);
+            if (plSquad.Count > 0) return plSquad;
+        }
+
+        logger.LogWarning("PL API squad empty for {TeamId}, falling back to TheSportsDB", teamId);
+        return await FetchSquadAsync(teamId, ct);
+    }
+
+    private async Task<IReadOnlyList<MatchDto>> FetchRecentWithFallbackAsync(
+        int teamId, int count, CancellationToken ct)
+    {
+        var teamName = await ResolveTeamNameFromStandingsAsync(teamId, ct);
+
+        if (!string.IsNullOrEmpty(teamName))
+        {
+            var plRecent = await plClient.GetRecentMatchesAsync(teamName, teamId, count, ct);
+            if (plRecent.Count > 0) return plRecent;
+        }
+
+        logger.LogWarning("PL API recent matches empty for {TeamId}, falling back to TheSportsDB", teamId);
+        return await FetchRecentTeamMatchesAsync(teamId, count, ct);
+    }
+
+    private async Task<string> ResolveTeamNameFromStandingsAsync(int teamId, CancellationToken ct)
+    {
+        var standings = await GetStandingsAsync(ct);
+        return standings.FirstOrDefault(s => s.TeamId == teamId)?.TeamName ?? string.Empty;
+    }
+
+    // ── Squad (TheSportsDB fallback) ──────────────────────────────────────────
     // GET /lookup_all_players.php?id={teamId}
 
     private async Task<IReadOnlyList<PlayerDto>> FetchSquadAsync(int teamId, CancellationToken ct)
     {
-        var url = $"lookup_all_players.php?id={teamId}";
-        using var resp = await http.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            logger.LogWarning("Squad fetch failed for team {TeamId}: {Code}", teamId, resp.StatusCode);
+            var root = await GetJsonAsync($"lookup_all_players.php?id={teamId}", ct);
+            if (root is null) return [];
+
+            if (!root.Value.TryGetProperty("player", out var players)
+                || players.ValueKind == JsonValueKind.Null)
+            {
+                logger.LogInformation("No squad data for team {TeamId}", teamId);
+                return [];
+            }
+
+            var result = new List<PlayerDto>();
+            foreach (var p in players.EnumerateArray())
+            {
+                var numStr = GetStrNullable(p, "strNumber");
+                var number = int.TryParse(numStr, out var n) ? n : 0;
+
+                result.Add(new PlayerDto(
+                    PlayerId: ParseInt(p, "idPlayer"),
+                    TeamId:   teamId,
+                    Name:     GetStr(p, "strPlayer"),
+                    Number:   number,
+                    Position: MapPosition(GetStr(p, "strPosition"))
+                ));
+            }
+
+            return result.OrderBy(p => PositionOrder(p.Position)).ThenBy(p => p.Number).ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to fetch squad for team {TeamId}", teamId);
             return [];
         }
-
-        var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-
-        if (!root.TryGetProperty("player", out var players) || players.ValueKind == JsonValueKind.Null)
-        {
-            logger.LogInformation("No squad data for team {TeamId} (may require Patreon tier)", teamId);
-            return [];
-        }
-
-        var result = new List<PlayerDto>();
-        foreach (var p in players.EnumerateArray())
-        {
-            var pos = p.TryGetProperty("strPosition", out var posEl) ? posEl.GetString() ?? "" : "";
-            var numStr = p.TryGetProperty("strNumber", out var numEl) ? numEl.GetString() : null;
-            _ = int.TryParse(numStr, out var number);
-
-            result.Add(new PlayerDto(
-                PlayerId: ParseInt(p, "idPlayer"),
-                TeamId:   teamId,
-                Name:     p.TryGetProperty("strPlayer", out var nm) ? nm.GetString() ?? "" : "",
-                Number:   number,
-                Position: MapPosition(pos)
-            ));
-        }
-
-        return result;
     }
 
-    // ── News from BBC Sport EPL RSS ───────────────────────────────────────────
+    // ── News (BBC Sport EPL RSS) ──────────────────────────────────────────────
 
     private async Task<IReadOnlyList<NewsDto>> FetchNewsAsync(int? teamId, CancellationToken ct)
     {
-        using var resp = await http.GetAsync(_opts.NewsRssUrl, ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            logger.LogWarning("BBC RSS fetch failed: {Code}", resp.StatusCode);
+            using var resp = await http.GetAsync(_opts.NewsRssUrl, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                logger.LogWarning("BBC RSS returned {Code}", resp.StatusCode);
+                return [];
+            }
+
+            var xml  = await resp.Content.ReadAsStringAsync(ct);
+            var doc  = XDocument.Parse(xml);
+
+            return doc.Descendants("item")
+                .Select(item => new NewsDto(
+                    Title:         item.Element("title")?.Value ?? "",
+                    Summary:       StripHtml(item.Element("description")?.Value ?? ""),
+                    Url:           item.Element("link")?.Value ?? "",
+                    PublishedAt:   ParseRssDate(item.Element("pubDate")?.Value),
+                    RelatedTeamId: teamId
+                ))
+                .Where(n => !string.IsNullOrEmpty(n.Url))
+                .Take(10)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to fetch news");
             return [];
         }
-
-        var xml = await resp.Content.ReadAsStringAsync(ct);
-        var doc = XDocument.Parse(xml);
-        XNamespace media = "http://search.yahoo.com/mrss/";
-
-        var items = doc.Descendants("item")
-            .Select(item => new NewsDto(
-                Title:         item.Element("title")?.Value ?? "",
-                Summary:       StripHtml(item.Element("description")?.Value ?? ""),
-                Url:           item.Element("link")?.Value ?? "",
-                PublishedAt:   ParseRssDate(item.Element("pubDate")?.Value),
-                RelatedTeamId: teamId
-            ))
-            .Where(n => !string.IsNullOrEmpty(n.Url));
-
-        // If teamId is provided, filter by team name in title/summary
-        if (teamId.HasValue)
-        {
-            // We don't have team name here, so filtering is done in NewsNotificationService
-            // which passes the team name. Return all for now — caller filters.
-        }
-
-        return items.Take(10).ToList();
     }
 
-    // ── Shared event parser ───────────────────────────────────────────────────
+    // ── Event parser ──────────────────────────────────────────────────────────
 
     private static IReadOnlyList<MatchDto> ParseEvents(JsonElement events)
     {
         var result = new List<MatchDto>();
         foreach (var e in events.EnumerateArray())
         {
-            var dateStr  = e.TryGetProperty("dateEvent", out var d)  ? d.GetString() : null;
-            var timeStr  = e.TryGetProperty("strTime",   out var t)  ? t.GetString() : "00:00:00";
-            var statusRaw = e.TryGetProperty("strStatus", out var s) ? s.GetString() ?? "NS" : "NS";
+            var dateStr   = GetStr(e, "dateEvent");
+            var timeStr   = GetStr(e, "strTime") is { Length: > 0 } t ? t : "00:00:00";
+            var statusRaw = GetStr(e, "strStatus");
 
             if (!DateTime.TryParse($"{dateStr}T{timeStr}",
                 CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var matchDate))
                 continue;
 
-            var homeScore = ParseNullableInt(e, "intHomeScore");
-            var awayScore = ParseNullableInt(e, "intAwayScore");
-
             result.Add(new MatchDto(
                 MatchId:      ParseInt(e, "idEvent"),
                 HomeTeamId:   ParseInt(e, "idHomeTeam"),
-                HomeTeamName: e.TryGetProperty("strHomeTeam", out var hn) ? hn.GetString() ?? "" : "",
+                HomeTeamName: GetStr(e, "strHomeTeam"),
                 AwayTeamId:   ParseInt(e, "idAwayTeam"),
-                AwayTeamName: e.TryGetProperty("strAwayTeam", out var an) ? an.GetString() ?? "" : "",
+                AwayTeamName: GetStr(e, "strAwayTeam"),
                 MatchDate:    matchDate.ToUniversalTime(),
-                Stadium:      e.TryGetProperty("strVenue", out var v) ? v.GetString() : null,
-                HomeScore:    homeScore,
-                AwayScore:    awayScore,
+                Stadium:      GetStrNullable(e, "strVenue"),
+                HomeScore:    ParseNullableInt(e, "intHomeScore"),
+                AwayScore:    ParseNullableInt(e, "intAwayScore"),
                 Status:       MapStatus(statusRaw)
             ));
         }
@@ -291,12 +364,25 @@ public sealed class FootballApiClient(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static string MapStatus(string raw) => raw.ToUpper() switch
+    private async Task<JsonElement?> GetJsonAsync(string url, CancellationToken ct)
     {
-        "NS" or "TBD" or "POSTPONED" => "scheduled",
-        "FT" or "AET" or "PEN"       => "finished",
-        _                             => raw.Length > 0 ? "live" : "scheduled"
-    };
+        using var resp = await http.GetAsync(url, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            logger.LogWarning("HTTP {Code} for {Url}", (int)resp.StatusCode, url);
+            return null;
+        }
+        return await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+    }
+
+    private static string MapStatus(string raw)
+    {
+        var up = raw.Trim().ToUpperInvariant();
+        if (up is "NS" or "TBD" or "POSTPONED" or "CANC" or "ABD") return "scheduled";
+        if (up.Contains("FINISH") || up is "FT" or "AET" or "PEN" or "AP") return "finished";
+        if (up.Length > 0) return "live";
+        return "scheduled";
+    }
 
     private static string MapPosition(string raw) => raw.ToLower() switch
     {
@@ -308,39 +394,40 @@ public sealed class FootballApiClient(
         _ => "midfielder"
     };
 
+    private static int PositionOrder(string pos) => pos switch
+    {
+        "goalkeeper" => 0, "defender" => 1, "midfielder" => 2, "forward" => 3, _ => 4
+    };
+
     private static int ParseInt(JsonElement el, string prop)
     {
-        if (!el.TryGetProperty(prop, out var val)) return 0;
-        if (val.ValueKind == JsonValueKind.Number) return val.GetInt32();
-        if (val.ValueKind == JsonValueKind.String)
-            return int.TryParse(val.GetString(), out var n) ? n : 0;
-        return 0;
+        if (!el.TryGetProperty(prop, out var v)) return 0;
+        if (v.ValueKind == JsonValueKind.Number) return v.GetInt32();
+        return int.TryParse(v.GetString(), out var n) ? n : 0;
     }
 
     private static int? ParseNullableInt(JsonElement el, string prop)
     {
-        if (!el.TryGetProperty(prop, out var val)) return null;
-        if (val.ValueKind == JsonValueKind.Null) return null;
-        if (val.ValueKind == JsonValueKind.Number) return val.GetInt32();
-        if (val.ValueKind == JsonValueKind.String)
-            return int.TryParse(val.GetString(), out var n) ? n : null;
-        return null;
+        if (!el.TryGetProperty(prop, out var v) || v.ValueKind == JsonValueKind.Null) return null;
+        if (v.ValueKind == JsonValueKind.Number) return v.GetInt32();
+        return int.TryParse(v.GetString(), out var n) ? n : null;
     }
+
+    private static string GetStr(JsonElement el, string prop)
+        => el.TryGetProperty(prop, out var v) ? v.GetString() ?? "" : "";
+
+    private static string? GetStrNullable(JsonElement el, string prop)
+        => el.TryGetProperty(prop, out var v) && v.ValueKind != JsonValueKind.Null
+            ? v.GetString() : null;
 
     private static DateTime ParseRssDate(string? raw)
     {
         if (string.IsNullOrEmpty(raw)) return DateTime.UtcNow;
-        // RFC 822 format: "Sun, 02 Apr 2025 14:30:00 GMT"
-        if (DateTime.TryParse(raw, CultureInfo.InvariantCulture,
-            DateTimeStyles.AdjustToUniversal, out var dt))
-            return dt;
-        return DateTime.UtcNow;
+        return DateTime.TryParse(raw, CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal, out var dt) ? dt : DateTime.UtcNow;
     }
 
     private static string StripHtml(string html)
-    {
-        if (string.IsNullOrEmpty(html)) return html;
-        // Simple tag removal – sufficient for RSS descriptions
-        return System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", "").Trim();
-    }
+        => string.IsNullOrEmpty(html) ? html
+            : System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", "").Trim();
 }

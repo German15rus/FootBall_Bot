@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using PremierLeagueBot.Models.Api;
 
@@ -8,16 +9,14 @@ public static class StandingsFormatter
     public static string Format(IReadOnlyList<StandingDto> standings)
     {
         if (standings.Count == 0)
-            return "⚠️ Таблица пока недоступна. Данные загружаются...";
+            return "⚠️ Таблица временно недоступна. Данные загружаются...";
 
-        var sb = new StringBuilder();
-        sb.AppendLine("🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>Английская Премьер-Лига — Таблица 2024/25</b>");
+        var updated = DateTime.UtcNow.ToString("d MMMM yyyy, HH:mm", new CultureInfo("ru-RU")) + " UTC";
+        var sb      = new StringBuilder();
+
+        sb.AppendLine("🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>Английская Премьер-Лига 2025/26</b>");
+        sb.AppendLine($"<i>Обновлено: {updated}</i>");
         sb.AppendLine();
-
-        // Header inside <pre> for monospace alignment
-        sb.AppendLine("<pre>");
-        sb.AppendLine("     Команда              И   О   ГР");
-        sb.AppendLine("─────────────────────────────────────");
 
         foreach (var s in standings)
         {
@@ -29,22 +28,16 @@ public static class StandingsFormatter
                 _ => $"{s.Rank,2}."
             };
 
-            // Truncate long names to keep table aligned
-            var name = s.TeamName.Length > 20
-                ? s.TeamName[..19] + "…"
-                : s.TeamName;
-
             var gd = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
 
-            // Medals take 2 chars visually vs "XX." — pad accordingly
-            var rankPad = s.Rank <= 3 ? " " : "";
-            sb.AppendLine($"{rankPad}{medal} {name,-20} {s.Played,2} {s.Points,3} {gd,4}");
+            sb.AppendLine(
+                $"{medal} {s.TeamName}" +
+                $" — <b>{s.Points} pts</b>" +
+                $"  <i>{s.Played}M  {gd}</i>");
         }
 
-        sb.AppendLine("─────────────────────────────────────");
-        sb.AppendLine("</pre>");
-        sb.Append("<i>И — сыграно,  О — очки,  ГР — разница мячей</i>");
-
+        sb.AppendLine();
+        sb.Append("<i>pts — очки  ·  M — матчи  ·  ГР — разница мячей</i>");
         return sb.ToString();
     }
 }

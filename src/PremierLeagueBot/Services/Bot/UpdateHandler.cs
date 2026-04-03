@@ -118,10 +118,29 @@ public sealed class UpdateHandler(
     private async Task HandleMatchesAsync(Message msg, CancellationToken ct)
     {
         await bot.SendChatAction(msg.Chat.Id, ChatAction.Typing, cancellationToken: ct);
-        var from    = DateTime.UtcNow.Date;
-        var matches = await football.GetMatchesAsync(from, from.AddDays(7), ct);
+
+        // Get user's favorite team to highlight their match first
+        int? favoriteTeamId = null;
+        if (msg.From is not null)
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            favoriteTeamId = (await db.Users.FindAsync([msg.From.Id], ct))?.FavoriteTeamId;
+        }
+
+        var from     = DateTime.UtcNow.Date;
+        var allMatches = await football.GetMatchesAsync(from, from.AddDays(7), ct);
+
+        // Keep only EPL First Team matches (teams that appear in the current standings)
+        var standings  = await football.GetStandingsAsync(ct);
+        var eplTeamIds = standings.Select(s => s.TeamId).ToHashSet();
+
+        var matches = eplTeamIds.Count > 0
+            ? allMatches.Where(m => eplTeamIds.Contains(m.HomeTeamId)
+                                 || eplTeamIds.Contains(m.AwayTeamId)).ToList()
+            : (IReadOnlyList<MatchDto>)allMatches;
+
         await bot.SendMessage(msg.Chat.Id,
-            MatchesFormatter.FormatUpcoming(matches),
+            MatchesFormatter.FormatUpcoming(matches, favoriteTeamId),
             parseMode: ParseMode.Html,
             cancellationToken: ct);
     }
@@ -257,7 +276,7 @@ public sealed class UpdateHandler(
         await Task.WhenAll(squadTask, recentTask);
 
         var squadText  = TeamInfoFormatter.FormatSquad(teamName, squadTask.Result);
-        var recentText = TeamInfoFormatter.FormatRecentMatches(teamName, recentTask.Result);
+        var recentText = TeamInfoFormatter.FormatRecentMatches(teamName, teamId, recentTask.Result);
 
         await bot.SendMessage(chatId, squadText,
             parseMode: ParseMode.Html, cancellationToken: ct);
@@ -331,20 +350,17 @@ public sealed class UpdateHandler(
     // ── Вспомогательные методы ───────────────────────────────────────────────
 
     /// <summary>
-    /// Returns team list: tries DB first (fast), falls back to live standings API
-    /// if DB hasn't been synced yet (first seconds after startup).
+    /// Returns the 20 EPL First Team clubs from the current standings.
+    /// Always uses standings as the source of truth — DB may contain extra teams
+    /// (cup opponents, old seasons) that must not appear here.
     /// </summary>
     private async Task<List<(int Id, string Name)>> GetTeamsAsync(CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var dbTeams = await db.Teams.OrderBy(t => t.Name).ToListAsync(ct);
-
-        if (dbTeams.Count > 0)
-            return dbTeams.Select(t => (t.TeamId, t.Name)).ToList();
-
-        // Fallback: load from standings API (cached, very fast after first call)
         var standings = await football.GetStandingsAsync(ct);
-        return standings.Select(s => (s.TeamId, s.TeamName)).ToList();
+        return standings
+            .OrderBy(s => s.TeamName)
+            .Select(s => (s.TeamId, s.TeamName))
+            .ToList();
     }
 
     /// <summary>Resolves team name by ID from DB or standings cache.</summary>

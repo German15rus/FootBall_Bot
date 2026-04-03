@@ -8,13 +8,47 @@ public static class MatchesFormatter
 {
     private static readonly CultureInfo Ru = new("ru-RU");
 
-    public static string FormatUpcoming(IReadOnlyList<MatchDto> matches)
+    /// <summary>
+    /// Formats upcoming EPL matches.
+    /// If favoriteTeamId is provided, that team's nearest match is shown first
+    /// in a dedicated highlighted block.
+    /// </summary>
+    public static string FormatUpcoming(
+        IReadOnlyList<MatchDto> matches,
+        int? favoriteTeamId = null)
     {
         if (matches.Count == 0)
             return "📅 На ближайшую неделю матчей АПЛ не запланировано.";
 
         var sb = new StringBuilder();
-        sb.AppendLine("📅 <b>Ближайшие матчи АПЛ — следующие 7 дней</b>");
+
+        // ── Favorite team's next match ────────────────────────────────────────
+        if (favoriteTeamId.HasValue)
+        {
+            var favMatch = matches
+                .Where(m => m.HomeTeamId == favoriteTeamId || m.AwayTeamId == favoriteTeamId)
+                .OrderBy(m => m.MatchDate)
+                .FirstOrDefault();
+
+            if (favMatch is not null)
+            {
+                var kickoff  = favMatch.MatchDate.ToLocalTime();
+                var dateStr  = Capitalize(kickoff.ToString("dddd, d MMMM", Ru));
+                var timeStr  = kickoff.ToString("HH:mm");
+
+                sb.AppendLine("⭐ <b>Ближайший матч вашей команды</b>");
+                sb.AppendLine("┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄");
+                sb.AppendLine($"⚽ <b>{favMatch.HomeTeamName}  vs  {favMatch.AwayTeamName}</b>");
+                sb.Append($"📆 <b>{dateStr}</b>   ⏰ <b>{timeStr}</b>");
+                if (favMatch.Stadium is not null)
+                    sb.Append($"\n📍 {favMatch.Stadium}");
+                sb.AppendLine();
+                sb.AppendLine();
+            }
+        }
+
+        // ── All upcoming matches grouped by day ───────────────────────────────
+        sb.AppendLine("📅 <b>Ближайшие матчи АПЛ (7 дней)</b>");
 
         var grouped = matches
             .OrderBy(m => m.MatchDate)
@@ -23,18 +57,21 @@ public static class MatchesFormatter
         foreach (var day in grouped)
         {
             sb.AppendLine();
-            // Day header
-            var dayName = day.Key.ToString("dddd, d MMMM", Ru);
-            dayName = char.ToUpper(dayName[0]) + dayName[1..];
-            sb.AppendLine($"📆 <b>{dayName}</b>");
-            sb.AppendLine("┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄");
+            sb.AppendLine($"📆 <b>{Capitalize(day.Key.ToString("dddd, d MMMM yyyy", Ru))}</b>");
+            sb.AppendLine("┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄");
 
             foreach (var m in day)
             {
-                var time = m.MatchDate.ToLocalTime().ToString("HH:mm");
+                var time  = m.MatchDate.ToLocalTime().ToString("HH:mm");
+                var isFav = favoriteTeamId.HasValue &&
+                            (m.HomeTeamId == favoriteTeamId || m.AwayTeamId == favoriteTeamId);
+                var prefix = isFav ? "⭐ " : "⚽ ";
+
                 sb.AppendLine();
-                sb.AppendLine($"⚽ <b>{m.HomeTeamName}  vs  {m.AwayTeamName}</b>");
-                sb.AppendLine($"    ⏰ {time}" + (m.Stadium != null ? $"   📍 {m.Stadium}" : ""));
+                sb.AppendLine($"{prefix}<b>{m.HomeTeamName}  vs  {m.AwayTeamName}</b>");
+                sb.Append($"    ⏰ <b>{time}</b>");
+                if (m.Stadium is not null) sb.Append($"   📍 {m.Stadium}");
+                sb.AppendLine();
             }
         }
 
@@ -55,6 +92,9 @@ public static class MatchesFormatter
         return $"🔔 <b>Матч начинается через 15 минут!</b>\n\n" +
                $"⚽ <b>{m.HomeTeamName}  vs  {m.AwayTeamName}</b>\n" +
                $"⏰ Начало в {time}" +
-               (m.Stadium != null ? $"\n📍 {m.Stadium}" : "");
+               (m.Stadium is not null ? $"\n📍 {m.Stadium}" : "");
     }
+
+    private static string Capitalize(string s)
+        => string.IsNullOrEmpty(s) ? s : char.ToUpper(s[0]) + s[1..];
 }

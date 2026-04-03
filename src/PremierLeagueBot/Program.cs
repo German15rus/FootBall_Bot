@@ -27,7 +27,9 @@ try
     builder.Host.UseSerilog();
 
     // ── Configuration binding ────────────────────────────────────────────────
-    var botToken = "8632451769:AAFVS9WSs0XU5N5uBdkwC8aY1DXEYKY-j5E";
+    var botToken = builder.Configuration["BotToken"]
+        ?? throw new InvalidOperationException(
+            "BotToken is not configured. Add it to appsettings.json or environment variable BotToken.");
     builder.Services.Configure<FootballApiOptions>(
         builder.Configuration.GetSection(FootballApiOptions.Section));
 
@@ -35,26 +37,30 @@ try
     builder.Services.AddSingleton<ITelegramBotClient>(
         new TelegramBotClient(botToken));
 
-    // ── Football API HTTP client with Polly retry ────────────────────────────
-    // Source: TheSportsDB (free, no key needed) + BBC Sport RSS
+    // ── Premier League official Pulselive API (squad + fixtures) ────────────
+    builder.Services.AddHttpClient("plapi", client =>
+    {
+        client.BaseAddress = new Uri("https://footballapi.pulselive.com/football/");
+        client.DefaultRequestHeaders.Add("Origin", "https://www.premierleague.com");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        client.Timeout = TimeSpan.FromSeconds(20);
+    });
+    builder.Services.AddSingleton<PremierLeagueApiClient>();
+
+    // ── TheSportsDB HTTP client (standings + league-wide fixtures) ───────────
     builder.Services
         .AddHttpClient<IFootballApiClient, FootballApiClient>((sp, client) =>
         {
             var opts = sp.GetRequiredService<IOptions<FootballApiOptions>>().Value;
-            if (string.IsNullOrWhiteSpace(opts.BaseUrl))
-                throw new InvalidOperationException(
-                    $"Configuration section '{FootballApiOptions.Section}:BaseUrl' is missing.");
-
             if (!Uri.TryCreate(opts.BaseUrl, UriKind.Absolute, out var baseUri))
-                throw new InvalidOperationException(
-                    $"Invalid '{FootballApiOptions.Section}:BaseUrl': '{opts.BaseUrl}'.");
+                throw new InvalidOperationException($"Invalid FootballApi:BaseUrl '{opts.BaseUrl}'");
 
             client.BaseAddress = baseUri;
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "PremierLeagueBot/1.0 (+https://github.com/your/repo)");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("PremierLeagueBot/1.0");
             client.Timeout = TimeSpan.FromSeconds(20);
         })
-        .AddStandardResilienceHandler(); // Polly: retry + circuit-breaker
+        .AddStandardResilienceHandler();
 
     // ── Memory cache ─────────────────────────────────────────────────────────
     builder.Services.AddMemoryCache();
