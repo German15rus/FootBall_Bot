@@ -8,14 +8,15 @@ public static class MatchesFormatter
 {
     private static readonly CultureInfo Ru = new("ru-RU");
 
+    // ── Upcoming matches with optional favorite-team highlight ────────────────
+
     /// <summary>
-    /// Formats upcoming EPL matches.
-    /// If favoriteTeamId is provided, that team's nearest match is shown first
-    /// in a dedicated highlighted block.
+    /// Formats upcoming matches. If <paramref name="favoriteTeamId"/> is supplied,
+    /// shows that team's nearest match in a dedicated block at the top.
     /// </summary>
-    public static string FormatUpcoming(
+    public static string FormatUpcomingWithFavorite(
         IReadOnlyList<MatchDto> matches,
-        int? favoriteTeamId = null)
+        int? favoriteTeamId)
     {
         if (matches.Count == 0)
             return "📅 На ближайшую неделю матчей АПЛ не запланировано.";
@@ -23,36 +24,43 @@ public static class MatchesFormatter
         var sb = new StringBuilder();
 
         // ── Favorite team's next match ────────────────────────────────────────
+        MatchDto? favMatch = null;
         if (favoriteTeamId.HasValue)
         {
-            var favMatch = matches
+            favMatch = matches
                 .Where(m => m.HomeTeamId == favoriteTeamId || m.AwayTeamId == favoriteTeamId)
                 .OrderBy(m => m.MatchDate)
                 .FirstOrDefault();
-
-            if (favMatch is not null)
-            {
-                var kickoff  = favMatch.MatchDate.ToLocalTime();
-                var dateStr  = Capitalize(kickoff.ToString("dddd, d MMMM", Ru));
-                var timeStr  = kickoff.ToString("HH:mm");
-
-                sb.AppendLine("⭐ <b>Ближайший матч вашей команды</b>");
-                sb.AppendLine("┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄");
-                sb.AppendLine($"⚽ <b>{favMatch.HomeTeamName}  vs  {favMatch.AwayTeamName}</b>");
-                sb.Append($"📆 <b>{dateStr}</b>   ⏰ <b>{timeStr}</b>");
-                if (favMatch.Stadium is not null)
-                    sb.Append($"\n📍 {favMatch.Stadium}");
-                sb.AppendLine();
-                sb.AppendLine();
-            }
         }
 
-        // ── All upcoming matches grouped by day ───────────────────────────────
-        sb.AppendLine("📅 <b>Ближайшие матчи АПЛ (7 дней)</b>");
+        if (favMatch is not null)
+        {
+            var favTime = favMatch.MatchDate.ToLocalTime();
+            sb.AppendLine("⭐ <b>Ближайший матч вашей команды</b>");
+            sb.AppendLine();
+            sb.AppendLine($"⚽ <b>{favMatch.HomeTeamName} vs {favMatch.AwayTeamName}</b>");
+            sb.AppendLine($"📅 {favTime:d MMM, HH:mm}");
+            if (favMatch.Stadium is not null)
+                sb.AppendLine($"📍 {favMatch.Stadium}");
+            sb.AppendLine();
+            sb.AppendLine("─────────────────────────");
+            sb.AppendLine();
+        }
 
-        var grouped = matches
-            .OrderBy(m => m.MatchDate)
-            .GroupBy(m => m.MatchDate.ToLocalTime().Date);
+        // ── All upcoming matches (excluding the already-shown favorite match) ──
+        var rest = favMatch is not null
+            ? matches.Where(m => m.MatchId != favMatch.MatchId).OrderBy(m => m.MatchDate).ToList()
+            : matches.OrderBy(m => m.MatchDate).ToList();
+
+        if (rest.Count == 0)
+        {
+            sb.Append("📅 <b>Больше матчей на ближайшие 7 дней нет.</b>");
+            return sb.ToString().TrimEnd();
+        }
+
+        sb.AppendLine("📅 <b>Ближайшие матчи Премьер-Лиги</b>");
+
+        var grouped = rest.GroupBy(m => m.MatchDate.ToLocalTime().Date);
 
         foreach (var day in grouped)
         {
@@ -62,9 +70,9 @@ public static class MatchesFormatter
 
             foreach (var m in day)
             {
-                var time  = m.MatchDate.ToLocalTime().ToString("HH:mm");
-                var isFav = favoriteTeamId.HasValue &&
-                            (m.HomeTeamId == favoriteTeamId || m.AwayTeamId == favoriteTeamId);
+                var time   = m.MatchDate.ToLocalTime().ToString("HH:mm");
+                var isFav  = favoriteTeamId.HasValue &&
+                             (m.HomeTeamId == favoriteTeamId || m.AwayTeamId == favoriteTeamId);
                 var prefix = isFav ? "⭐ " : "⚽ ";
 
                 sb.AppendLine();
@@ -77,6 +85,13 @@ public static class MatchesFormatter
 
         return sb.ToString().TrimEnd();
     }
+
+    // ── Legacy: kept for backward compatibility (notifications) ───────────────
+
+    public static string FormatUpcoming(IReadOnlyList<MatchDto> matches)
+        => FormatUpcomingWithFavorite(matches, favoriteTeamId: null);
+
+    // ── Notification templates ────────────────────────────────────────────────
 
     public static string FormatResult(MatchDto m)
     {

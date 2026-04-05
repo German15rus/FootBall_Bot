@@ -5,6 +5,7 @@ using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Background;
 using PremierLeagueBot.Services.Bot;
 using PremierLeagueBot.Services.Football;
+using PremierLeagueBot.Services.Emoji;
 using PremierLeagueBot.Services.Notification;
 using Serilog;
 using Telegram.Bot;
@@ -37,30 +38,38 @@ try
     builder.Services.AddSingleton<ITelegramBotClient>(
         new TelegramBotClient(botToken));
 
-    // ── Premier League official Pulselive API (squad + fixtures) ────────────
-    builder.Services.AddHttpClient("plapi", client =>
+    // ── HTTP clients ──────────────────────────────────────────────────────────
+    // FootballApiClient uses IHttpClientFactory with two named clients:
+    //   "PlApi"    → official PL API  (standings, fixtures)
+    //   "SportsDb" → TheSportsDB      (squad data)
     {
-        client.BaseAddress = new Uri("https://footballapi.pulselive.com/football/");
-        client.DefaultRequestHeaders.Add("Origin", "https://www.premierleague.com");
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        client.Timeout = TimeSpan.FromSeconds(20);
-    });
-    builder.Services.AddSingleton<PremierLeagueApiClient>();
+        var apiOpts = builder.Configuration
+            .GetSection(FootballApiOptions.Section)
+            .Get<FootballApiOptions>() ?? new FootballApiOptions();
 
-    // ── TheSportsDB HTTP client (standings + league-wide fixtures) ───────────
-    builder.Services
-        .AddHttpClient<IFootballApiClient, FootballApiClient>((sp, client) =>
-        {
-            var opts = sp.GetRequiredService<IOptions<FootballApiOptions>>().Value;
-            if (!Uri.TryCreate(opts.BaseUrl, UriKind.Absolute, out var baseUri))
-                throw new InvalidOperationException($"Invalid FootballApi:BaseUrl '{opts.BaseUrl}'");
+        builder.Services
+            .AddHttpClient(FootballApiClient.PlApiClient, client =>
+            {
+                client.BaseAddress = new Uri(apiOpts.PlBaseUrl);
+                client.DefaultRequestHeaders.Add("Origin", "https://www.premierleague.com");
+                client.DefaultRequestHeaders.Add("Referer", "https://www.premierleague.com/");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                client.Timeout = TimeSpan.FromSeconds(20);
+            })
+            .AddStandardResilienceHandler();
 
-            client.BaseAddress = baseUri;
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("PremierLeagueBot/1.0");
-            client.Timeout = TimeSpan.FromSeconds(20);
-        })
-        .AddStandardResilienceHandler();
+        builder.Services
+            .AddHttpClient(FootballApiClient.SportsDbClient, client =>
+            {
+                client.BaseAddress = new Uri(apiOpts.SportsDbBaseUrl);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("PremierLeagueBot/1.0");
+                client.Timeout = TimeSpan.FromSeconds(20);
+            })
+            .AddStandardResilienceHandler();
+    }
+
+    builder.Services.AddSingleton<IFootballApiClient, FootballApiClient>();
 
     // ── Memory cache ─────────────────────────────────────────────────────────
     builder.Services.AddMemoryCache();
@@ -87,6 +96,7 @@ try
     // ── Application services ──────────────────────────────────────────────────
     // Singleton: safe because both use IDbContextFactory (not DbContext directly)
     builder.Services.AddSingleton<NotificationService>();
+    builder.Services.AddSingleton<EmojiPackService>();
     builder.Services.AddSingleton<UpdateHandler>();
 
     // ── Background services ───────────────────────────────────────────────────
@@ -110,6 +120,10 @@ try
     }
 
     app.MapHealthChecks("/health");
+
+    // ── Load custom emoji pack (non-blocking; falls back to standard emoji) ───
+    var emojiService = app.Services.GetRequiredService<EmojiPackService>();
+    _ = emojiService.InitialiseAsync(); // fire-and-forget; bot starts without waiting
 
     // Long Polling: no webhook needed – BotHostedService calls bot.ReceiveAsync()
     await app.RunAsync();

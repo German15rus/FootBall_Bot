@@ -25,7 +25,7 @@ public sealed class NewsNotificationService(
         while (!stoppingToken.IsCancellationRequested)
         {
             try   { await CheckAndSendNewsAsync(stoppingToken); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             { logger.LogError(ex, "Error in NewsNotificationService"); }
 
             await Task.Delay(CheckInterval, stoppingToken);

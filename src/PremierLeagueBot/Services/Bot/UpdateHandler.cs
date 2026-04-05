@@ -3,6 +3,7 @@ using PremierLeagueBot.Data;
 using PremierLeagueBot.Formatters;
 using PremierLeagueBot.Models.Api;
 using PremierLeagueBot.Models.Bot;
+using PremierLeagueBot.Services.Emoji;
 using PremierLeagueBot.Services.Football;
 using Telegram.Bot;
 using Telegram.Bot.Types;
@@ -15,6 +16,7 @@ public sealed class UpdateHandler(
     ITelegramBotClient bot,
     IFootballApiClient football,
     IDbContextFactory<AppDbContext> dbFactory,
+    EmojiPackService emojiService,
     ILogger<UpdateHandler> logger)
 {
     // ── Entry point ──────────────────────────────────────────────────────────
@@ -108,7 +110,7 @@ public sealed class UpdateHandler(
         await bot.SendChatAction(msg.Chat.Id, ChatAction.Typing, cancellationToken: ct);
         var standings = await football.GetStandingsAsync(ct);
         await bot.SendMessage(msg.Chat.Id,
-            StandingsFormatter.Format(standings),
+            StandingsFormatter.Format(standings, emojiService),
             parseMode: ParseMode.Html,
             cancellationToken: ct);
     }
@@ -127,7 +129,7 @@ public sealed class UpdateHandler(
             favoriteTeamId = (await db.Users.FindAsync([msg.From.Id], ct))?.FavoriteTeamId;
         }
 
-        var from     = DateTime.UtcNow.Date;
+        var from       = DateTime.UtcNow.Date;
         var allMatches = await football.GetMatchesAsync(from, from.AddDays(7), ct);
 
         // Keep only EPL First Team matches (teams that appear in the current standings)
@@ -140,7 +142,7 @@ public sealed class UpdateHandler(
             : (IReadOnlyList<MatchDto>)allMatches;
 
         await bot.SendMessage(msg.Chat.Id,
-            MatchesFormatter.FormatUpcoming(matches, favoriteTeamId),
+            MatchesFormatter.FormatUpcomingWithFavorite(matches, favoriteTeamId),
             parseMode: ParseMode.Html,
             cancellationToken: ct);
     }

@@ -47,10 +47,12 @@ public sealed class DataUpdateService(
         while (!ct.IsCancellationRequested)
         {
             try   { await action(ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
-                // Log and continue – don't crash the service on transient API errors
-                Console.Error.WriteLine($"[{name}] Error: {ex.Message}");
+                if (ex is OperationCanceledException)
+                    Console.Error.WriteLine($"[{name}] Request timed out (Polly): {ex.Message}");
+                else
+                    Console.Error.WriteLine($"[{name}] Error: {ex.Message}");
             }
             await Task.Delay(interval, ct);
         }
@@ -74,6 +76,7 @@ public sealed class DataUpdateService(
         foreach (var s in standings)
         {
             if (s.TeamId <= 0) continue;
+
             var existing = await db.Teams.FindAsync([s.TeamId], ct);
             if (existing is null)
                 db.Teams.Add(new Team { TeamId = s.TeamId, Name = s.TeamName, ShortName = s.ShortName, EmblemUrl = s.EmblemUrl });
@@ -98,8 +101,8 @@ public sealed class DataUpdateService(
         var db             = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var knownTeamIds   = (await db.Teams.Select(t => t.TeamId).ToListAsync(ct)).ToHashSet();
 
-        var from    = DateTime.UtcNow.AddDays(-7);
-        var to      = DateTime.UtcNow.AddDays(14);
+        var from    = DateTime.UtcNow.AddDays(-30);
+        var to      = DateTime.UtcNow.AddDays(30);
         var matches = await football.GetMatchesAsync(from, to, ct);
 
         foreach (var m in matches)
@@ -130,9 +133,13 @@ public sealed class DataUpdateService(
             }
             else
             {
-                existing.HomeScore = m.HomeScore;
-                existing.AwayScore = m.AwayScore;
-                existing.Status    = m.Status;
+                existing.HomeTeamId = m.HomeTeamId;
+                existing.AwayTeamId = m.AwayTeamId;
+                existing.MatchDate  = m.MatchDate;
+                existing.Stadium    = m.Stadium;
+                existing.HomeScore  = m.HomeScore;
+                existing.AwayScore  = m.AwayScore;
+                existing.Status     = m.Status;
             }
         }
 
@@ -140,7 +147,7 @@ public sealed class DataUpdateService(
         logger.LogInformation("Synced {Count} matches", matches.Count);
     }
 
-    // ── Sync squads ──────────────────────────────────────────────────────────
+    // ── Sync squads — runs every 24 hours ────────────────────────────────────
 
     private async Task SyncSquadsAsync(CancellationToken ct)
     {
@@ -158,7 +165,6 @@ public sealed class DataUpdateService(
             {
                 var players = await football.GetTeamSquadAsync(teamId, ct);
 
-                // Remove old squad entries for this team
                 var old = db.Players.Where(p => p.TeamId == teamId);
                 db.Players.RemoveRange(old);
 
@@ -181,12 +187,14 @@ public sealed class DataUpdateService(
                 logger.LogWarning(ex, "Failed to sync squad for team {TeamId}", teamId);
             }
 
-            // Stay well within API-Football free tier (100 req/day)
+            // Stay within API free tier rate limits (2 sec delay between teams)
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
 
         logger.LogInformation("Squad sync complete");
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void EnsureTeamExists(
         AppDbContext db,
@@ -200,8 +208,8 @@ public sealed class DataUpdateService(
         var safeName = string.IsNullOrWhiteSpace(teamName) ? $"Team {teamId}" : teamName.Trim();
         db.Teams.Add(new Team
         {
-            TeamId = teamId,
-            Name = safeName,
+            TeamId    = teamId,
+            Name      = safeName,
             ShortName = ToShortName(safeName)
         });
 

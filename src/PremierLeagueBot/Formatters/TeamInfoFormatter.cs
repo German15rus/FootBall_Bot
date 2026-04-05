@@ -32,15 +32,17 @@ public static class TeamInfoFormatter
         }
 
         var groups = players
-            .GroupBy(p => p.Position)
-            .OrderBy(g => PositionOrder(g.Key));
+            .OrderBy(p => PositionOrder(p.Position))
+            .ThenBy(p => p.Number > 0 ? p.Number : int.MaxValue)
+            .ThenBy(p => p.Name)
+            .GroupBy(p => p.Position);
 
         foreach (var g in groups)
         {
             var label = PositionLabels.GetValueOrDefault(g.Key, g.Key);
             sb.AppendLine($"<b>{label}</b>");
 
-            foreach (var p in g.OrderBy(x => x.Number == 0 ? 99 : x.Number))
+            foreach (var p in g)
             {
                 var num = p.Number > 0 ? $"#{p.Number}" : " —";
                 sb.AppendLine($"  <code>{num,3}</code>  {p.Name}");
@@ -55,7 +57,7 @@ public static class TeamInfoFormatter
     // ── Recent matches ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Formats the last N matches in the style requested:
+    /// Formats the last N matches in the style:
     ///
     /// Arsenal VS Manchester City
     /// Поражение: 0 - 2
@@ -78,7 +80,6 @@ public static class TeamInfoFormatter
         // Show most recent first
         foreach (var m in matches.OrderByDescending(m => m.MatchDate))
         {
-            // Determine if selected team played home or away
             // Use both ID and name comparison to handle different data sources
             var isHome = m.HomeTeamId == teamId
                       || m.HomeTeamName.Equals(teamName, StringComparison.OrdinalIgnoreCase)
@@ -89,8 +90,8 @@ public static class TeamInfoFormatter
             var oppScore  = isHome ? m.AwayScore : m.HomeScore;
             var homeLabel = m.HomeTeamName;
 
-            var resultWord = GetResultWord(ourScore, oppScore);
-            var resultEmoji = GetResultEmoji(ourScore, oppScore);
+            var resultWord  = GetResultWord(ourScore, oppScore);
+            var resultEmoji = GetResultIcon(ourScore, oppScore);
 
             var dateStr = m.MatchDate.ToLocalTime().ToString("d MMMM yyyy", Ru);
             var score   = (m.HomeScore.HasValue && m.AwayScore.HasValue)
@@ -117,7 +118,7 @@ public static class TeamInfoFormatter
         return "Поражение";
     }
 
-    private static string GetResultEmoji(int? teamScore, int? oppScore)
+    private static string GetResultIcon(int? teamScore, int? oppScore)
     {
         if (teamScore is null || oppScore is null) return "❓";
         if (teamScore > oppScore)  return "✅";
