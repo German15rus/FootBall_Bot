@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>EPL Predictions</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+  <!-- ── Loading Screen ────────────────────────────────────────────────────── -->
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-logo">
+      <div class="pl-badge">PL</div>
+      <p class="loading-text" id="loading-text">Loading…</p>
+    </div>
+  </div>
+
+  <!-- ── Main App ───────────────────────────────────────────────────────────── -->
+  <div id="app" class="app hidden">
+
+    <!-- Navigation -->
+    <nav class="nav-bar">
+      <button class="nav-btn active" data-tab="standings">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label" data-i18n="nav.standings">Table</span>
+      </button>
+      <button class="nav-btn" data-tab="matches">
+        <span class="nav-icon">📅</span>
+        <span class="nav-label" data-i18n="nav.matches">Matches</span>
+      </button>
+      <button class="nav-btn" data-tab="predictions">
+        <span class="nav-icon">🔮</span>
+        <span class="nav-label" data-i18n="nav.predictions">Predict</span>
+      </button>
+      <button class="nav-btn" data-tab="profile">
+        <span class="nav-icon">👤</span>
+        <span class="nav-label" data-i18n="nav.profile">Profile</span>
+      </button>
+    </nav>
+
+    <!-- Tab: Standings -->
+    <div id="tab-standings" class="tab-content active">
+      <div class="tab-header">
+        <h1 class="tab-title" data-i18n="standings.title">Premier League</h1>
+        <p class="tab-subtitle season-label">2025/26</p>
+      </div>
+      <div id="standings-body" class="content-body"></div>
+    </div>
+
+    <!-- Tab: Matches -->
+    <div id="tab-matches" class="tab-content">
+      <div class="tab-header">
+        <h1 class="tab-title" data-i18n="matches.title">Upcoming Matches</h1>
+        <p class="tab-subtitle" data-i18n="matches.subtitle">Next 7 days</p>
+      </div>
+      <div id="matches-body" class="content-body"></div>
+    </div>
+
+    <!-- Tab: Predictions -->
+    <div id="tab-predictions" class="tab-content">
+      <div class="tab-header">
+        <h1 class="tab-title" data-i18n="predictions.title">Predictions</h1>
+        <p class="tab-subtitle" data-i18n="predictions.subtitle">Next 7 days</p>
+      </div>
+      <div class="coeff-banner">
+        <span class="coeff-icon">⚡</span>
+        <span data-i18n="predictions.coeffBanner">Dynamic scoring: some matches award up to 5 pts for exact scores!</span>
+      </div>
+      <div id="predictions-body" class="content-body"></div>
+    </div>
+
+    <!-- Tab: Profile -->
+    <div id="tab-profile" class="tab-content">
+      <div id="profile-body" class="content-body"></div>
+    </div>
+
+    <!-- Team Modal -->
+    <div id="team-modal" class="modal hidden">
+      <div class="modal-backdrop" id="modal-backdrop"></div>
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <img id="modal-team-emblem" src="" alt="" class="modal-emblem" />
+          <h2 id="modal-team-name"></h2>
+          <button class="modal-close" id="modal-close">✕</button>
+        </div>
+        <div class="modal-tabs">
+          <button class="modal-tab active" data-modal-tab="squad" data-i18n="team.squad">Squad</button>
+          <button class="modal-tab" data-modal-tab="recent" data-i18n="team.recent">Last 5</button>
+        </div>
+        <div id="modal-squad" class="modal-body"></div>
+        <div id="modal-recent" class="modal-body hidden"></div>
+      </div>
+    </div>
+
+  </div><!-- /app -->
+
+  <script src="/js/i18n.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/tabs/standings.js"></script>
+  <script src="/js/tabs/matches.js"></script>
+  <script src="/js/tabs/predictions.js"></script>
+  <script src="/js/tabs/profile.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

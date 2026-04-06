@@ -1,0 +1,41 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # ── Required ──────────────────────────────────────────────────────────
+      - BotToken=${BOT_TOKEN}
+      # ── Database ──────────────────────────────────────────────────────────
+      # Option A: SQLite (simple, for small deployments)
+      - ConnectionStrings__Default=Data Source=/app/data/premier_league_bot.db;Journal Mode=WAL;
+      # Option B: PostgreSQL — comment out Option A and uncomment below:
+      # - ConnectionStrings__Default=Host=db;Database=plbot;Username=plbot;Password=${DB_PASSWORD}
+      # ── Environment ───────────────────────────────────────────────────────
+      - ASPNETCORE_ENVIRONMENT=Production
+    volumes:
+      - bot_data:/app/data
+      - bot_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Optional: PostgreSQL ─────────────────────────────────────────────────────
+  # Uncomment if you switch to PostgreSQL (Option B above)
+  # db:
+  #   image: postgres:16-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     - POSTGRES_DB=plbot
+  #     - POSTGRES_USER=plbot
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+
+volumes:
+  bot_data:
+  bot_logs:
+  # pg_data:
