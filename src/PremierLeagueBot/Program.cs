@@ -19,7 +19,7 @@ Log.Logger = new LoggerConfiguration()
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 7)
     .CreateLogger();
-
+// ываыва
 try
 {
 
