@@ -22,6 +22,8 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
+
+    // task11
     var builder = WebApplication.CreateBuilder(args);
 
     // ── Serilog ──────────────────────────────────────────────────────────────
