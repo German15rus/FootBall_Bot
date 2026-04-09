@@ -142,7 +142,7 @@ public sealed class FootballApiClient : IFootballApiClient
                 return newestId;
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Exception resolving PL season ID, using fallback {Id}", fallbackId);
         }
@@ -152,69 +152,176 @@ public sealed class FootballApiClient : IFootballApiClient
 
     // ── Standings (official PL API) ──────────────────────────────────────────
 
+    private static readonly string StandingsCacheFile =
+        Path.Combine(AppContext.BaseDirectory, "standings_cache.json");
+
     private async Task<IReadOnlyList<StandingDto>> FetchStandingsAsync(CancellationToken ct)
     {
-        var seasonId = await GetSeasonIdAsync(ct);
-        var client   = _factory.CreateClient(PlApiClient);
-        var url      = $"standings?compSeasons={seasonId}&altIds=true&detail=2" +
-                       $"&COMP={_opts.CompetitionId}&phase=1&source=PLUS&teams=-1&type=totals";
-
-        using var resp = await client.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            _logger.LogWarning("PL standings fetch failed: {Status}", resp.StatusCode);
+            var seasonId = await GetSeasonIdAsync(ct);
+            var client   = _factory.CreateClient(PlApiClient);
+            var url      = $"standings?compSeasons={seasonId}&altIds=true&detail=2" +
+                           $"&COMP={_opts.CompetitionId}&phase=1&source=PLUS&teams=-1&type=totals";
+
+            using var resp = await client.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("PL standings fetch failed: {Status}", resp.StatusCode);
+                return await LoadStandingsFallbackAsync(ct);
+            }
+
+            var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+
+            if (!root.TryGetProperty("tables", out var tables) || tables.GetArrayLength() == 0)
+            {
+                _logger.LogWarning("PL standings response has no tables");
+                return await LoadStandingsFallbackAsync(ct);
+            }
+
+            var latestTable = tables[tables.GetArrayLength() - 1];
+            if (!latestTable.TryGetProperty("entries", out var entries))
+                return await LoadStandingsFallbackAsync(ct);
+
+            var result = new List<StandingDto>();
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("team", out var teamEl)) continue;
+                if (!entry.TryGetProperty("overall", out var overall)) continue;
+
+                var teamId   = ParseInt(teamEl, "id");
+                var teamName = teamEl.TryGetProperty("name", out var tn) ? tn.GetString() ?? "" : "";
+                var abbr     = teamEl.TryGetProperty("club", out var club) &&
+                               club.TryGetProperty("abbr", out var ab)
+                               ? ab.GetString() ?? ""
+                               : Abbr(teamName);
+
+                if (teamId == 0 || string.IsNullOrEmpty(teamName)) continue;
+
+                result.Add(new StandingDto(
+                    Rank:           ParseInt(entry, "position"),
+                    TeamId:         teamId,
+                    TeamName:       teamName,
+                    ShortName:      abbr,
+                    EmblemUrl:      null,
+                    Played:         ParseInt(overall, "played"),
+                    Won:            ParseInt(overall, "won"),
+                    Drawn:          ParseInt(overall, "drawn"),
+                    Lost:           ParseInt(overall, "lost"),
+                    GoalsFor:       ParseInt(overall, "goalsFor"),
+                    GoalsAgainst:   ParseInt(overall, "goalsAgainst"),
+                    GoalDifference: ParseInt(overall, "goalsDifference"),
+                    Points:         ParseInt(overall, "points")
+                ));
+            }
+
+            result.Sort((a, b) => a.Rank.CompareTo(b.Rank));
+            _logger.LogInformation("Fetched {Count} PL standings", result.Count);
+
+            // Save to disk so future restarts can serve cached data when API is down
+            await SaveStandingsCacheAsync(result);
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("PL standings fetch exception: {Msg} — trying disk cache", ex.Message);
+            return await LoadStandingsFallbackAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// Fetches standings from TheSportsDB (free, no key required) as fallback.
+    /// URL: lookuptable.php?l={leagueId}&amp;s={season}
+    /// </summary>
+    private async Task<IReadOnlyList<StandingDto>> FetchStandingsFromSportsDbAsync(CancellationToken ct)
+    {
+        try
+        {
+            var client = _factory.CreateClient(SportsDbClient);
+            var url    = $"lookuptable.php?l={_opts.LeagueId}&s={_opts.Season}";
+
+            using var resp = await client.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode) return [];
+
+            var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            if (!root.TryGetProperty("table", out var table) || table.ValueKind == JsonValueKind.Null)
+                return [];
+
+            var result = new List<StandingDto>();
+            foreach (var row in table.EnumerateArray())
+            {
+                var teamName  = row.TryGetProperty("strTeam",      out var tn) ? tn.GetString() ?? "" : "";
+                var shortName = row.TryGetProperty("strTeamShort", out var ts) ? ts.GetString() ?? "" : "";
+                if (string.IsNullOrEmpty(teamName)) continue;
+                if (string.IsNullOrEmpty(shortName))
+                    shortName = Abbr(teamName);
+
+                result.Add(new StandingDto(
+                    Rank:           ParseInt(row, "intRank"),
+                    TeamId:         0,
+                    TeamName:       teamName,
+                    ShortName:      shortName,
+                    EmblemUrl:      null,
+                    Played:         ParseInt(row, "intPlayed"),
+                    Won:            ParseInt(row, "intWin"),
+                    Drawn:          ParseInt(row, "intDraw"),
+                    Lost:           ParseInt(row, "intLoss"),
+                    GoalsFor:       ParseInt(row, "intGoalsFor"),
+                    GoalsAgainst:   ParseInt(row, "intGoalsAgainst"),
+                    GoalDifference: ParseInt(row, "intGoalDifference"),
+                    Points:         ParseInt(row, "intPoints")
+                ));
+            }
+
+            result.Sort((a, b) => a.Rank.CompareTo(b.Rank));
+            _logger.LogInformation("Fetched {Count} standings from TheSportsDB", result.Count);
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("TheSportsDB standings fetch failed: {Msg}", ex.Message);
             return [];
         }
+    }
 
-        var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-
-        // tables[] is ordered by gameweek; last entry = latest standings
-        if (!root.TryGetProperty("tables", out var tables) || tables.GetArrayLength() == 0)
+    private async Task SaveStandingsCacheAsync(IReadOnlyList<StandingDto> standings)
+    {
+        try
         {
-            _logger.LogWarning("PL standings response has no tables");
-            return [];
+            var json = JsonSerializer.Serialize(standings);
+            await File.WriteAllTextAsync(StandingsCacheFile, json);
         }
-
-        var latestTable = tables[tables.GetArrayLength() - 1];
-        if (!latestTable.TryGetProperty("entries", out var entries))
-            return [];
-
-        var result = new List<StandingDto>();
-
-        foreach (var entry in entries.EnumerateArray())
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (!entry.TryGetProperty("team", out var teamEl)) continue;
-            if (!entry.TryGetProperty("overall", out var overall)) continue;
-
-            var teamId   = ParseInt(teamEl, "id");
-            var teamName = teamEl.TryGetProperty("name", out var tn)      ? tn.GetString() ?? "" : "";
-            var abbr     = teamEl.TryGetProperty("club", out var club) &&
-                           club.TryGetProperty("abbr", out var ab)
-                           ? ab.GetString() ?? ""
-                           : teamName.Length >= 3 ? teamName[..3].ToUpper() : teamName.ToUpper();
-
-            if (teamId == 0 || string.IsNullOrEmpty(teamName)) continue;
-
-            result.Add(new StandingDto(
-                Rank:           ParseInt(entry, "position"),
-                TeamId:         teamId,
-                TeamName:       teamName,
-                ShortName:      abbr,
-                EmblemUrl:      null,   // PL API badge URLs require extra auth
-                Played:         ParseInt(overall, "played"),
-                Won:            ParseInt(overall, "won"),
-                Drawn:          ParseInt(overall, "drawn"),
-                Lost:           ParseInt(overall, "lost"),
-                GoalsFor:       ParseInt(overall, "goalsFor"),
-                GoalsAgainst:   ParseInt(overall, "goalsAgainst"),
-                GoalDifference: ParseInt(overall, "goalsDifference"),
-                Points:         ParseInt(overall, "points")
-            ));
+            _logger.LogWarning("Could not save standings cache: {Msg}", ex.Message);
         }
+    }
 
-        result.Sort((a, b) => a.Rank.CompareTo(b.Rank));
-        _logger.LogInformation("Fetched {Count} PL standings", result.Count);
-        return result;
+    private async Task<IReadOnlyList<StandingDto>> LoadStandingsFallbackAsync(CancellationToken ct = default)
+    {
+        // 1) Try TheSportsDB (free alternative API)
+        var sportsDb = await FetchStandingsFromSportsDbAsync(ct);
+        if (sportsDb.Count > 0) return sportsDb;
+
+        // 2) Try disk cache from last successful fetch
+        try
+        {
+            var json = await File.ReadAllTextAsync(StandingsCacheFile, ct);
+            var data = JsonSerializer.Deserialize<List<StandingDto>>(json);
+            if (data is { Count: > 0 })
+            {
+                _logger.LogInformation("Serving standings from disk cache ({Count} teams)", data.Count);
+                return data;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Could not load standings disk cache: {Msg}", ex.Message);
+        }
+        return [];
     }
 
     // ── Matches in date range (official PL API) ──────────────────────────────
@@ -529,6 +636,9 @@ public sealed class FootballApiClient : IFootballApiClient
     };
 
     // ── JSON parse helpers ───────────────────────────────────────────────────
+
+    private static string Abbr(string teamName)
+        => teamName.Length >= 3 ? teamName[..3].ToUpper() : teamName.ToUpper();
 
     private static int ParseInt(JsonElement el, string prop)
     {

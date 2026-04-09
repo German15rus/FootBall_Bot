@@ -54,9 +54,14 @@ try
                 client.DefaultRequestHeaders.Add("Referer", "https://www.premierleague.com/");
                 client.DefaultRequestHeaders.UserAgent.ParseAdd(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                client.Timeout = TimeSpan.FromSeconds(20);
             })
-            .AddStandardResilienceHandler();
+            .AddStandardResilienceHandler(o =>
+            {
+                // Fail fast so the TheSportsDB / disk-cache fallback kicks in quickly.
+                o.AttemptTimeout.Timeout  = TimeSpan.FromSeconds(8);
+                o.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(20);
+                o.Retry.MaxRetryAttempts  = 1;
+            });
 
         builder.Services
             .AddHttpClient(FootballApiClient.SportsDbClient, client =>

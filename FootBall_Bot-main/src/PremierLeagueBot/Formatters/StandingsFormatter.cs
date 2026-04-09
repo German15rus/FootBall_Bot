@@ -75,7 +75,7 @@ public static class StandingsFormatter
 
         var sb = new StringBuilder();
         sb.AppendLine($"🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>АПЛ — Таблица 2025/26</b>");
-        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}</i>");
+        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}  ·  И · О · ГР</i>");
         sb.AppendLine();
 
         var renderZone = emojiService is { IsReady: true }
@@ -98,7 +98,7 @@ public static class StandingsFormatter
 
             var gd = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
 
-            sb.AppendLine($"{zone}<b>{rank,-3}</b>{emblem} {name,-14} {s.Played,2}  <b>{s.Points,3}</b>  {gd,4}");
+            sb.AppendLine($"{zone}<b>{rank,-3}</b>{emblem} {name,-14} {s.Played} · <b>{s.Points}</b> · {gd}");
         }
 
         sb.AppendLine();
@@ -113,7 +113,7 @@ public static class StandingsFormatter
             $"🟥 Вылет (18–20)\n" +
             $"{z10} Без еврокубков");
         sb.AppendLine();
-        sb.Append("<i>И — игры · О — очки · ГР — разница голов</i>");
+        sb.Append("<i>И — игры  О — очки  ГР — разница голов</i>");
 
         return sb.ToString();
     }
