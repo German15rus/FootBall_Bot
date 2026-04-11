@@ -43,14 +43,28 @@ public static class StandingsFormatter
             ["Wolverhampton Wanderers"]    = "🐺",
         };
 
+    // ── Zone colours ──────────────────────────────────────────────────────────
+    // Premier League 2025/26 European/relegation zones:
+    //   1–4  Champions League   🟦
+    //   5    Europa League      🟨
+    //   6    Conference League  🟩
+    //   7–17 No Europe          ⬜
+    //  18–20 Relegation         🟥
+    private static string ZoneSquare(int rank) => rank switch
+    {
+        <= 4  => "🟦",
+        5     => "🟨",
+        6     => "🟩",
+        >= 18 => "🟥",
+        _     => "⬜"
+    };
+
     // ── Main formatter ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Formats the league table.
+    /// Formats the league table with zone indicators.
     /// When <paramref name="emojiService"/> is provided and has a loaded pack,
-    /// club names render with Premium custom emoji
-    /// (<c>&lt;tg-emoji emoji-id="..."&gt;</c>);
-    /// otherwise standard emoji characters are used as fallback.
+    /// club names render with Premium custom emoji; otherwise standard emoji.
     /// </summary>
     public static string Format(
         IReadOnlyList<StandingDto> standings,
@@ -60,25 +74,23 @@ public static class StandingsFormatter
             return "⚠️ Таблица временно недоступна. Данные загружаются...";
 
         var sb = new StringBuilder();
-        sb.AppendLine($"🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>АПЛ — Таблица 2025/26 (тур {standings.Max(s => s.Played)})</b>");
+        sb.AppendLine($"🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>АПЛ — Таблица 2025/26</b>");
+        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}  ·  И · О · ГР</i>");
         sb.AppendLine();
+
+        var renderZone = emojiService is { IsReady: true }
+            ? (Func<int, string>)(r => emojiService.RenderZone(r))
+            : ZoneSquare;
 
         foreach (var s in standings)
         {
-            var medal = s.Rank switch
-            {
-                1 => "🥇",
-                2 => "🥈",
-                3 => "🥉",
-                _ => $"{s.Rank,2}."
-            };
+            var zone   = renderZone(s.Rank);
+            var rank   = $"{s.Rank}.";
 
-            // Truncate long names to keep table aligned
-            var name = s.TeamName.Length > 20
-                ? s.TeamName[..19] + "…"
-                : s.TeamName;
+            // Use short name, truncate if needed
+            var name = (string.IsNullOrWhiteSpace(s.ShortName) ? s.TeamName : s.ShortName);
+            if (name.Length > 14) name = name[..13] + "…";
 
-            // Get team emblem emoji (custom if pack loaded, fallback otherwise)
             var fallback = GetFallbackEmoji(s.TeamName);
             var emblem   = emojiService is { IsReady: true }
                 ? emojiService.RenderEmblem(s.TeamName, fallback)
@@ -86,14 +98,22 @@ public static class StandingsFormatter
 
             var gd = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
 
-            // Medals take 2 chars visually vs "XX." — pad accordingly
-            var rankPad = s.Rank <= 3 ? " " : "";
-            sb.AppendLine($"{rankPad}{medal} {emblem} {name,-20} {s.Played,2} {s.Points,3} {gd,4}");
+            sb.AppendLine($"{zone}<b>{rank,-3}</b>{emblem} {name,-14} {s.Played} · <b>{s.Points}</b> · {gd}");
         }
 
         sb.AppendLine();
-        sb.AppendLine("─────────────────────────────────────");
-        sb.Append("<i>И — сыграно,  О — очки,  ГР — разница мячей</i>");
+        var z1  = renderZone(1);
+        var z5  = renderZone(5);
+        var z6  = renderZone(6);
+        var z10 = renderZone(10);
+        sb.AppendLine(
+            $"{z1} Лига чемпионов (1–4)\n" +
+            $"{z5} Лига Европы (5)\n" +
+            $"{z6} Лига конференций (6)\n" +
+            $"🟥 Вылет (18–20)\n" +
+            $"{z10} Без еврокубков");
+        sb.AppendLine();
+        sb.Append("<i>И — игры · О — очки · ГР — разница голов</i>");
 
         return sb.ToString();
     }

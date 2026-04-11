@@ -25,14 +25,10 @@ public sealed class EmojiPackService(
     public bool IsReady { get; private set; }
 
     // ── Explicit mapping: sticker emoji character → PL club name ─────────────
-    // Each sticker in the pack has a "fallback emoji" character.
-    // This table maps that character to the correct PL team name.
-    // Update this if the pack uses different characters.
+    // Used when stickers have unique emoji characters per club.
     private static readonly Dictionary<string, string> EmojiToClub =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            // Common football emoji characters used in club packs
-            // (will be refined automatically after first run — check the logs)
             ["🔴"] = "Arsenal",
             ["❤️"] = "Liverpool",
             ["😈"] = "Manchester United",
@@ -55,6 +51,12 @@ public sealed class EmojiPackService(
             ["🔵"] = "Brighton",
         };
 
+    // ── Manual override: custom_emoji_id → PL club name ───────────────────────
+    // Used when multiple clubs share the same fallback emoji (e.g. 🏴󠁧󠁢󠁥󠁮󠁧󠁿 for all EPL clubs).
+    // Populated from configuration key "EmojiIdToClub" in appsettings.json.
+    private readonly Dictionary<string, string> _idToClub =
+        new(StringComparer.OrdinalIgnoreCase);
+
     // ── Startup initialisation ────────────────────────────────────────────────
 
     /// <summary>
@@ -69,6 +71,26 @@ public sealed class EmojiPackService(
             logger.LogInformation(
                 "EmojiPackName not configured — using standard emoji in standings table. " +
                 "Set EmojiPackName in appsettings.json to enable custom emoji.");
+            return;
+        }
+
+        // Load manual overrides from config (custom_emoji_id → club name)
+        var overrides = configuration.GetSection("EmojiIdToClub").Get<Dictionary<string, string>>();
+        if (overrides is { Count: > 0 })
+        {
+            foreach (var (id, club) in overrides)
+                _idToClub[id] = club;
+            logger.LogInformation("Loaded {Count} manual emoji_id overrides from config", _idToClub.Count);
+        }
+
+        // If all clubs are mapped via config — build the map directly,
+        // no need to call Telegram API (works without VPN / network at startup).
+        if (_idToClub.Count > 0)
+        {
+            foreach (var (emojiId, club) in _idToClub)
+                _map[club] = emojiId;
+            IsReady = true;
+            logger.LogInformation("Emoji map ready from config: {Count} clubs", _map.Count);
             return;
         }
 
@@ -93,14 +115,23 @@ public sealed class EmojiPackService(
                     i, sticker.Emoji, sticker.CustomEmojiId ?? "(none)");
             }
 
-            // Try to auto-map using the emoji character
+            // Map stickers: manual override takes priority, then auto by emoji character
             int mapped = 0;
             foreach (var sticker in set.Stickers)
             {
                 if (string.IsNullOrEmpty(sticker.CustomEmojiId)) continue;
 
-                if (sticker.Emoji is not null &&
-                    EmojiToClub.TryGetValue(sticker.Emoji, out var club))
+                string? club = null;
+
+                // 1) Check manual id→club override
+                if (_idToClub.TryGetValue(sticker.CustomEmojiId, out var manualClub))
+                    club = manualClub;
+                // 2) Fallback: auto-map by emoji character
+                else if (sticker.Emoji is not null &&
+                         EmojiToClub.TryGetValue(sticker.Emoji, out var autoClub))
+                    club = autoClub;
+
+                if (club is not null)
                 {
                     _map[club] = sticker.CustomEmojiId;
                     mapped++;
@@ -109,7 +140,7 @@ public sealed class EmojiPackService(
             }
 
             logger.LogInformation(
-                "Auto-mapped {Mapped}/{Total} clubs from pack '{Pack}'",
+                "Mapped {Mapped}/{Total} clubs from pack '{Pack}'",
                 mapped, set.Stickers.Length, packName);
 
             IsReady = _map.Count > 0;
@@ -134,14 +165,34 @@ public sealed class EmojiPackService(
     /// Renders the club emblem as an inline custom emoji (HTML mode).
     /// Falls back to a standard emoji character if the club is not in the pack.
     /// </summary>
-    /// <param name="clubName">Official PL club name (e.g. "Arsenal").</param>
-    /// <param name="fallbackEmoji">Standard emoji to show if pack not available.</param>
     public string RenderEmblem(string clubName, string fallbackEmoji)
     {
         var id = GetCustomEmojiId(clubName);
-        // <tg-emoji> is shown to Premium users; fallback shown to others
         return id is not null
             ? $"<tg-emoji emoji-id=\"{id}\">{fallbackEmoji}</tg-emoji>"
             : fallbackEmoji;
+    }
+
+    /// <summary>
+    /// Renders a zone indicator for the given league position.
+    /// Uses competition logos from the pack when configured; falls back to coloured squares.
+    /// Relegation zone always stays 🟥 (no competition logo needed).
+    /// </summary>
+    public string RenderZone(int rank)
+    {
+        var (key, fallback) = rank switch
+        {
+            <= 4  => ("ChampionsLeague",  "🟦"),
+            5     => ("EuropaLeague",     "🟨"),
+            6     => ("ConferenceLeague", "🟩"),
+            >= 18 => (null,               "🟥"),
+            _     => ("PremierLeague",    "⬜"),
+        };
+
+        if (key is null) return fallback;
+        var id = configuration[$"ZoneEmojiIds:{key}"];
+        return string.IsNullOrEmpty(id)
+            ? fallback
+            : $"<tg-emoji emoji-id=\"{id}\">{fallback}</tg-emoji>";
     }
 }
