@@ -7,7 +7,7 @@ RUN dotnet restore "src/PremierLeagueBot/PremierLeagueBot.csproj"
 
 COPY . .
 WORKDIR "/src/src/PremierLeagueBot"
-RUN dotnet publish "PremierLeagueBot.csproj" -c Release -o /app/publish --no-restore
+RUN dotnet publish "PremierLeagueBot.csproj" -c Release -o /app/publish
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
