@@ -1,12 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
-using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Football;
 
 namespace PremierLeagueBot.Controllers;
 
 [ApiController]
 [Route("api/teams")]
-[ServiceFilter(typeof(TelegramAuthFilter))]
 public sealed class TeamsController(IFootballApiClient football) : ControllerBase
 {
     /// <summary>Returns squad and last 5 matches for a team.</summary>

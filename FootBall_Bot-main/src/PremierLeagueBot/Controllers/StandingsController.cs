@@ -1,12 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
-using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Football;
 
 namespace PremierLeagueBot.Controllers;
 
 [ApiController]
 [Route("api/standings")]
-[ServiceFilter(typeof(TelegramAuthFilter))]
 public sealed class StandingsController(IFootballApiClient football) : ControllerBase
 {
     [HttpGet]

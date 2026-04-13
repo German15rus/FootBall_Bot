@@ -1,14 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PremierLeagueBot.Data;
-using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Football;
 
 namespace PremierLeagueBot.Controllers;
 
 [ApiController]
 [Route("api/matches")]
-[ServiceFilter(typeof(TelegramAuthFilter))]
 public sealed class MatchesController(
     IDbContextFactory<AppDbContext> dbFactory,
     IFootballApiClient football) : ControllerBase
