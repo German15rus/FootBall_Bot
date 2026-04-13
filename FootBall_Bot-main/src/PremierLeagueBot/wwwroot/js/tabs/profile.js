@@ -130,9 +130,10 @@ const ProfileTab = (() => {
       _data = telegramId ? await Api.user(telegramId) : await Api.me();
       render(_data);
     } catch(e) {
+      const msg = e.data?.error || e.message || 'Failed to load profile';
       container.innerHTML = `<div class="empty-state">
         <div class="empty-icon">⚠️</div>
-        <div class="empty-msg">Failed to load profile</div>
+        <div class="empty-msg">${msg}</div>
       </div>`;
     }
   }

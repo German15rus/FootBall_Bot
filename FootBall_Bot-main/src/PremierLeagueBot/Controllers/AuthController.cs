@@ -27,7 +27,7 @@ public sealed class AuthController(
         if (string.IsNullOrWhiteSpace(request.InitData))
             return BadRequest(new { error = "initData is required" });
 
-        var botToken = configuration["BotToken"] ?? "";
+        var botToken = (configuration["BotToken"] ?? "").Trim();
         var isDev    = HttpContext.RequestServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
 
         if (!TelegramInitDataValidator.TryValidate(request.InitData, botToken, out var parsed) && !isDev)

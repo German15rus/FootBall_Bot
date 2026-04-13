@@ -154,7 +154,8 @@ const PredictionsTab = (() => {
       preds.forEach(p => { _myPreds[p.matchId] = p; });
       render();
     } catch(e) {
-      container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-msg">Failed to load</div></div>`;
+      const msg = e.data?.error || e.message || 'Failed to load';
+      container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-msg">${msg}</div></div>`;
     }
   }
 

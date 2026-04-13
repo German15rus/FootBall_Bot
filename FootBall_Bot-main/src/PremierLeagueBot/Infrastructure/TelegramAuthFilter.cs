@@ -27,7 +27,7 @@ public sealed class TelegramAuthFilter(
             return;
         }
 
-        var botToken = configuration["BotToken"] ?? "";
+        var botToken = (configuration["BotToken"] ?? "").Trim();
 
         // In Development, skip time-based expiry check by accepting test initData
         var isDev = context.HttpContext.RequestServices
