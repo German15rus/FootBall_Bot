@@ -148,19 +148,9 @@ const Router = (() => {
   const loadingText = document.getElementById('loading-text');
   if (loadingText) loadingText.textContent = i18n.lang === 'ru' ? 'Загрузка…' : 'Loading…';
 
-  // Login
+  // Set initData immediately so API calls can start
   const initData = tg?.initData || '';
-  try {
-    await Api.login(initData);
-    Api.setInitData(initData);
-  } catch(e) {
-    console.warn('Login failed, continuing anyway', e);
-    Api.setInitData(initData);
-  }
-
-  // Check for ?user= in URL for public profile viewing
-  const params  = new URLSearchParams(window.location.search);
-  const viewUser = params.get('user');
+  Api.setInitData(initData);
 
   // Wire up navigation
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -174,15 +164,26 @@ const Router = (() => {
     btn.addEventListener('click', () => TeamModal.switchModalTab(btn.dataset.modalTab));
   });
 
-  // Show app
+  // Show app immediately — don't block on login
   document.getElementById('loading-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
 
-  // If opening a public profile link
+  // Check for ?user= in URL for public profile viewing
+  const params   = new URLSearchParams(window.location.search);
+  const viewUser = params.get('user');
+
   if (viewUser) {
     Router.go('profile');
     ProfileTab.load(viewUser);
   } else {
     Router.go('standings');
   }
+
+  // Login in background (non-blocking — registers/updates user in DB)
+  fetch('/api/auth/login', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ initData }),
+    signal:  AbortSignal.timeout(8000),
+  }).catch(e => console.warn('Background login failed:', e));
 })();
