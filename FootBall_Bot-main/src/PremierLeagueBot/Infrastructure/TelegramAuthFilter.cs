@@ -19,17 +19,32 @@ public sealed class TelegramAuthFilter(
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // ── Option 1: session token (cached after first login) ───────────────
+        var sessionToken = context.HttpContext.Request.Headers["X-Session-Token"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(sessionToken))
+        {
+            var userByToken = await db.Users.FirstOrDefaultAsync(u => u.SessionToken == sessionToken);
+            if (userByToken is not null)
+            {
+                context.HttpContext.Items[CurrentUserKey] = userByToken;
+                await next();
+                return;
+            }
+        }
+
+        // ── Option 2: Telegram initData (HMAC validation) ────────────────────
         var initData = context.HttpContext.Request.Headers["X-Telegram-Init-Data"].FirstOrDefault();
 
         if (string.IsNullOrEmpty(initData))
         {
-            context.Result = new UnauthorizedObjectResult(new { error = "Missing X-Telegram-Init-Data header" });
+            context.Result = new UnauthorizedObjectResult(new { error = "Not authenticated. Please reopen the app from the bot." });
             return;
         }
 
         var botToken = (configuration["BotToken"] ?? "").Trim();
 
-        // In Development, skip time-based expiry check by accepting test initData
         var isDev = context.HttpContext.RequestServices
             .GetRequiredService<IHostEnvironment>().IsDevelopment();
 
@@ -39,19 +54,16 @@ public sealed class TelegramAuthFilter(
             return;
         }
 
-        // In development, allow a fake userId for testing if validation failed
         if (parsed.TelegramId == 0 && isDev)
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid initData (dev mode)" });
             return;
         }
 
-        await using var db = await dbFactory.CreateDbContextAsync();
         var user = await db.Users.FindAsync(parsed.TelegramId);
 
         if (user is null)
         {
-            // Auto-create user on first API call (mirrors bot behavior)
             user = new User
             {
                 TelegramId   = parsed.TelegramId,
@@ -66,10 +78,9 @@ public sealed class TelegramAuthFilter(
         }
         else
         {
-            // Keep profile data fresh on every login
             var changed = false;
-            if (user.FirstName != parsed.FirstName)   { user.FirstName    = parsed.FirstName;    changed = true; }
-            if (user.Username  != parsed.Username)     { user.Username     = parsed.Username;     changed = true; }
+            if (user.FirstName != parsed.FirstName)       { user.FirstName    = parsed.FirstName;    changed = true; }
+            if (user.Username  != parsed.Username)         { user.Username     = parsed.Username;     changed = true; }
             if (user.LanguageCode != parsed.LanguageCode) { user.LanguageCode = parsed.LanguageCode; changed = true; }
             if (changed) await db.SaveChangesAsync();
         }

@@ -39,6 +39,8 @@ public sealed class AuthController(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var user = await db.Users.FindAsync([parsed.TelegramId], ct);
 
+        var sessionToken = Guid.NewGuid().ToString("N");
+
         if (user is null)
         {
             user = new User
@@ -47,11 +49,12 @@ public sealed class AuthController(
                 FirstName    = parsed.FirstName,
                 Username     = parsed.Username,
                 LanguageCode = parsed.LanguageCode,
-                RegisteredAt = DateTime.UtcNow
+                RegisteredAt = DateTime.UtcNow,
+                SessionToken = sessionToken
             };
             db.Users.Add(user);
             await db.SaveChangesAsync(ct);
-            await achievementService.SeedAsync(ct); // ensure achievements exist in DB
+            await achievementService.SeedAsync(ct);
             logger.LogInformation("MiniApp login: new user {Id}", parsed.TelegramId);
         }
         else
@@ -59,6 +62,7 @@ public sealed class AuthController(
             user.FirstName    = parsed.FirstName;
             user.Username     = parsed.Username;
             user.LanguageCode = parsed.LanguageCode;
+            user.SessionToken = sessionToken;
             await db.SaveChangesAsync(ct);
         }
 
@@ -72,7 +76,8 @@ public sealed class AuthController(
             username     = user.Username,
             avatarUrl    = user.AvatarUrl,
             languageCode = user.LanguageCode,
-            registeredAt = user.RegisteredAt
+            registeredAt = user.RegisteredAt,
+            sessionToken
         });
     }
 }

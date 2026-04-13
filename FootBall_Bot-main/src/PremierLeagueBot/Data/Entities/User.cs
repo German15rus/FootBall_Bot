@@ -9,6 +9,7 @@ public class User
     public string? LanguageCode { get; set; }
     public int? FavoriteTeamId { get; set; }
     public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
+    public string? SessionToken { get; set; }
 
     public Team? FavoriteTeam { get; set; }
     public ICollection<Prediction> Predictions { get; set; } = [];

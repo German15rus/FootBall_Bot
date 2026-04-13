@@ -1,17 +1,26 @@
 const Api = (() => {
-  let _initData = '';
+  let _initData    = '';
+  let _sessionToken = '';
+
+  const SESSION_KEY = 'tg_session_token';
 
   function setInitData(data) { _initData = data; }
 
+  function setSessionToken(token) {
+    _sessionToken = token || '';
+    try { localStorage.setItem(SESSION_KEY, _sessionToken); } catch(_) {}
+  }
+
+  function loadSessionToken() {
+    try { _sessionToken = localStorage.getItem(SESSION_KEY) || ''; } catch(_) {}
+  }
+
   async function request(path, opts = {}) {
-    const res = await fetch(path, {
-      ...opts,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Telegram-Init-Data': _initData,
-        ...(opts.headers || {})
-      }
-    });
+    const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (_sessionToken) headers['X-Session-Token']        = _sessionToken;
+    if (_initData)     headers['X-Telegram-Init-Data']  = _initData;
+
+    const res = await fetch(path, { ...opts, headers });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw Object.assign(new Error(err.error || 'API error'), { status: res.status, data: err });
@@ -21,6 +30,8 @@ const Api = (() => {
 
   return {
     setInitData,
+    setSessionToken,
+    loadSessionToken,
     login:       (initData)           => fetch('/api/auth/login', {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },

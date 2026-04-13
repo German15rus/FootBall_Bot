@@ -148,7 +148,8 @@ const Router = (() => {
   const loadingText = document.getElementById('loading-text');
   if (loadingText) loadingText.textContent = i18n.lang === 'ru' ? 'Загрузка…' : 'Loading…';
 
-  // Set initData immediately so API calls can start
+  // Load cached session token first so API calls work immediately
+  Api.loadSessionToken();
   const initData = tg?.initData || '';
   Api.setInitData(initData);
 
@@ -179,11 +180,16 @@ const Router = (() => {
     Router.go('standings');
   }
 
-  // Login in background (non-blocking — registers/updates user in DB)
-  fetch('/api/auth/login', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ initData }),
-    signal:  AbortSignal.timeout(8000),
-  }).catch(e => console.warn('Background login failed:', e));
+  // Login in background — registers user and refreshes session token
+  if (initData) {
+    fetch('/api/auth/login', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ initData }),
+      signal:  AbortSignal.timeout(8000),
+    })
+    .then(r => r.ok ? r.json() : null)
+    .then(data => { if (data?.sessionToken) Api.setSessionToken(data.sessionToken); })
+    .catch(e => console.warn('Background login failed:', e));
+  }
 })();
