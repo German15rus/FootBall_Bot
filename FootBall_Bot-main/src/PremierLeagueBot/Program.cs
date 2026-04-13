@@ -149,6 +149,7 @@ try
 
     // ── Static files + CORS for Telegram Mini App ─────────────────────────────
     // wwwroot/ will contain the Mini App frontend (HTML/JS/CSS).
+    app.UseDefaultFiles();   // serves index.html for "/"
     app.UseStaticFiles();
     app.UseCors("TelegramMiniApp");
 
