@@ -54,6 +54,7 @@ public sealed class UpdateHandler(
         if (text is "/matches" or "📅 Матчи")             { await HandleMatchesAsync(msg, ct);   return; }
         if (text is "/team"    or "🏟 Команда")           { await HandleTeamListAsync(msg, ct);  return; }
         if (text is "/myteam"  or "⭐ Моя команда")       { await HandleMyTeamMenuAsync(msg, ct);return; }
+        if (text is "/predict" or "🔮 Предикты")          { await HandlePredictAsync(msg, ct);   return; }
 
         if (text.StartsWith("/team "))
         {
@@ -70,16 +71,11 @@ public sealed class UpdateHandler(
 
     private async Task HandleStartAsync(Message msg, CancellationToken ct)
     {
-        var miniAppUrl = configuration["MiniAppUrl"] ?? "";
-        var predictButton = string.IsNullOrEmpty(miniAppUrl)
-            ? new KeyboardButton("🔮 Предикты")
-            : KeyboardButton.WithWebApp("🔮 Предикты", new WebAppInfo { Url = miniAppUrl });
-
         var keyboard = new ReplyKeyboardMarkup(
         [
             [new KeyboardButton("📊 Таблица"),   new KeyboardButton("📅 Матчи")],
             [new KeyboardButton("🏟 Команда"),   new KeyboardButton("⭐ Моя команда")],
-            [predictButton],
+            [new KeyboardButton("🔮 Предикты")],
         ])
         {
             ResizeKeyboard  = true,
@@ -112,6 +108,31 @@ public sealed class UpdateHandler(
             msg.Chat.Id, welcome,
             parseMode:   ParseMode.Html,
             replyMarkup: keyboard,
+            cancellationToken: ct);
+    }
+
+    // ── Предикты (inline-кнопка для открытия Mini App с initData) ────────────
+
+    private async Task HandlePredictAsync(Message msg, CancellationToken ct)
+    {
+        var miniAppUrl = configuration["MiniAppUrl"] ?? "";
+        if (string.IsNullOrEmpty(miniAppUrl))
+        {
+            await bot.SendMessage(msg.Chat.Id,
+                "⚙️ Mini App пока не настроен.",
+                cancellationToken: ct);
+            return;
+        }
+
+        var inlineKeyboard = new InlineKeyboardMarkup(
+            InlineKeyboardButton.WithWebApp("🔮 Открыть предикты", new WebAppInfo { Url = miniAppUrl })
+        );
+
+        await bot.SendMessage(
+            msg.Chat.Id,
+            "🔮 <b>Предикты АПЛ</b>\n\nУгадывай счета матчей и соревнуйся с другими!\nНажми кнопку ниже 👇",
+            parseMode:   ParseMode.Html,
+            replyMarkup: inlineKeyboard,
             cancellationToken: ct);
     }
 
