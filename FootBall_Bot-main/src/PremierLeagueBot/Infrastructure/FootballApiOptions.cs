@@ -18,6 +18,16 @@ public sealed class FootballApiOptions
     /// </summary>
     public int SeasonId { get; set; } = 0;
 
+    // ── Champions League ──────────────────────────────────────────────────────
+    /// <summary>Champions League competition ID in the PL API.</summary>
+    public int ClCompetitionId { get; set; } = 2;
+
+    /// <summary>
+    /// Override the CL season ID. Set to 0 to auto-detect.
+    /// Example: 813 = 2025/26.
+    /// </summary>
+    public int ClSeasonId { get; set; } = 0;
+
     // ── TheSportsDB (fallback for squad data) ─────────────────────────────────
     /// <summary>TheSportsDB base URL (free, no key required).</summary>
     public string SportsDbBaseUrl { get; set; } = "https://www.thesportsdb.com/api/v1/json/3/";

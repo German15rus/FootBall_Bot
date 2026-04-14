@@ -13,6 +13,9 @@ public class Match
     /// <summary>scheduled | live | finished</summary>
     public string Status { get; set; } = "scheduled";
 
+    /// <summary>1 = Premier League, 2 = Champions League</summary>
+    public int CompetitionId { get; set; } = 1;
+
     /// <summary>Flag: pre-match notification already sent</summary>
     public bool PreMatchNotificationSent { get; set; }
 

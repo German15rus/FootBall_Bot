@@ -1,6 +1,7 @@
 const PredictionsTab = (() => {
-  let _matches    = null;  // upcoming matches
-  let _myPreds    = {};    // matchId → prediction object
+  let _league   = null;  // null = league picker shown; 'epl' | 'ucl' = league selected
+  let _matches  = null;
+  let _myPreds  = {};    // matchId → prediction object
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,61 @@ const PredictionsTab = (() => {
     return i18n.t('pred.miss');
   }
 
+  // ── League picker ─────────────────────────────────────────────────────────
+
+  function renderLeaguePicker() {
+    const container = document.getElementById('predictions-body');
+    container.innerHTML = `
+      <div class="league-picker">
+        <div class="league-card" onclick="PredictionsTab.selectLeague('epl')">
+          <div class="league-card-icon">🏴󠁧󠁢󠁥󠁮󠁧󠁿</div>
+          <div class="league-card-name">${i18n.t('pred.league.epl')}</div>
+          <div class="league-card-sub">Premier League</div>
+        </div>
+        <div class="league-card" onclick="PredictionsTab.selectLeague('ucl')">
+          <div class="league-card-icon">🏆</div>
+          <div class="league-card-name">${i18n.t('pred.league.ucl')}</div>
+          <div class="league-card-sub">UEFA Champions League</div>
+        </div>
+      </div>`;
+  }
+
+  function renderLeagueHeader() {
+    const tab = document.getElementById('tab-predictions');
+    const titleEl = tab.querySelector('.tab-title');
+    const subtitleEl = tab.querySelector('.tab-subtitle');
+
+    if (_league === 'ucl') {
+      titleEl.textContent   = i18n.t('pred.league.ucl');
+      subtitleEl.textContent = 'UEFA Champions League';
+    } else {
+      titleEl.setAttribute('data-i18n', 'predictions.title');
+      titleEl.textContent   = i18n.t('predictions.title');
+      subtitleEl.setAttribute('data-i18n', 'predictions.subtitle');
+      subtitleEl.textContent = i18n.t('predictions.subtitle');
+    }
+
+    // Show/hide back button
+    let backBtn = document.getElementById('pred-back-btn');
+    if (!backBtn) {
+      backBtn = document.createElement('button');
+      backBtn.id        = 'pred-back-btn';
+      backBtn.className = 'pred-back-btn';
+      backBtn.onclick   = () => { _league = null; load(); };
+      tab.querySelector('.tab-header').prepend(backBtn);
+    }
+    backBtn.innerHTML   = `← ${i18n.t('pred.back')}`;
+    backBtn.style.display = _league ? 'block' : 'none';
+  }
+
+  function selectLeague(league) {
+    _league  = league;
+    _matches = null;
+    _myPreds = {};
+    renderLeagueHeader();
+    loadMatches();
+  }
+
   // ── Render one card ────────────────────────────────────────────────────────
 
   function renderCard(match) {
@@ -49,7 +105,6 @@ const PredictionsTab = (() => {
     const mins   = minsLeft(match);
     const urgent = open && mins <= 60;
 
-    // Input state
     let homeVal = pred ? pred.predictedHome : 0;
     let awayVal = pred ? pred.predictedAway : 0;
 
@@ -111,7 +166,6 @@ const PredictionsTab = (() => {
     if (val > 20) val = 20;
     el.textContent = val;
 
-    // Mark save button as unsaved
     const btn = document.getElementById(`savebtn-${matchId}`);
     if (btn) { btn.textContent = i18n.t('pred.save'); btn.classList.remove('saved'); }
   }
@@ -142,24 +196,27 @@ const PredictionsTab = (() => {
     btn.disabled = false;
   }
 
-  // ── Load & render ─────────────────────────────────────────────────────────
+  // ── Load matches for selected league ─────────────────────────────────────
 
-  async function load() {
+  async function loadMatches() {
     const container = document.getElementById('predictions-body');
     container.innerHTML = '<div class="spinner"></div>';
     try {
-      const [matches, preds] = await Promise.all([Api.upcoming(), Api.predictions()]);
+      const [matches, preds] = await Promise.all([
+        Api.upcoming(_league),
+        Api.predictions()
+      ]);
       _matches = matches;
       _myPreds = {};
       preds.forEach(p => { _myPreds[p.matchId] = p; });
-      render();
+      renderMatches();
     } catch(e) {
       const msg = e.data?.error || e.message || 'Failed to load';
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-msg">${msg}</div></div>`;
     }
   }
 
-  function render() {
+  function renderMatches() {
     const container = document.getElementById('predictions-body');
     if (!_matches || _matches.length === 0) {
       container.innerHTML = `<div class="empty-state">
@@ -171,5 +228,16 @@ const PredictionsTab = (() => {
     container.innerHTML = _matches.map(renderCard).join('');
   }
 
-  return { load, adjust, save };
+  // ── Entry point ───────────────────────────────────────────────────────────
+
+  function load() {
+    renderLeagueHeader();
+    if (!_league) {
+      renderLeaguePicker();
+    } else {
+      loadMatches();
+    }
+  }
+
+  return { load, adjust, save, selectLeague };
 })();

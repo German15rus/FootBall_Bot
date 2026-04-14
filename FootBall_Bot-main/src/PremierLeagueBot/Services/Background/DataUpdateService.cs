@@ -25,14 +25,16 @@ public sealed class DataUpdateService(
     {
         logger.LogInformation("DataUpdateService started");
 
-        // Run all three loops in parallel, staggered so they don't hit the API at once
+        // Run all loops in parallel, staggered so they don't hit the API at once
         await Task.WhenAll(
-            RunOnIntervalAsync("Standings", StandingsInterval,
-                SyncStandingsAsync,  initialDelay: TimeSpan.Zero,          ct: stoppingToken),
-            RunOnIntervalAsync("Matches",   MatchInterval,
-                SyncMatchesAsync,    initialDelay: TimeSpan.FromSeconds(5), ct: stoppingToken),
-            RunOnIntervalAsync("Squads",    SquadInterval,
-                SyncSquadsAsync,     initialDelay: TimeSpan.FromMinutes(2), ct: stoppingToken)
+            RunOnIntervalAsync("Standings",  StandingsInterval,
+                SyncStandingsAsync,   initialDelay: TimeSpan.Zero,           ct: stoppingToken),
+            RunOnIntervalAsync("Matches",    MatchInterval,
+                SyncMatchesAsync,     initialDelay: TimeSpan.FromSeconds(5),  ct: stoppingToken),
+            RunOnIntervalAsync("ClMatches",  MatchInterval,
+                SyncClMatchesAsync,   initialDelay: TimeSpan.FromSeconds(15), ct: stoppingToken),
+            RunOnIntervalAsync("Squads",     SquadInterval,
+                SyncSquadsAsync,      initialDelay: TimeSpan.FromMinutes(2),  ct: stoppingToken)
         );
     }
 
@@ -146,6 +148,63 @@ public sealed class DataUpdateService(
 
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Synced {Count} matches", matches.Count);
+    }
+
+    // ── Sync CL matches (every 10 min) ──────────────────────────────────────
+
+    private async Task SyncClMatchesAsync(CancellationToken ct)
+    {
+        using var scope  = scopeFactory.CreateScope();
+        var football     = scope.ServiceProvider.GetRequiredService<IFootballApiClient>();
+        var db           = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var knownTeamIds = (await db.Teams.Select(t => t.TeamId).ToListAsync(ct)).ToHashSet();
+
+        var from    = DateTime.UtcNow.AddDays(-30);
+        var to      = DateTime.UtcNow.AddDays(60);
+        var matches = await football.GetClMatchesAsync(from, to, ct);
+
+        foreach (var m in matches)
+        {
+            if (m.MatchId <= 0 || m.HomeTeamId <= 0 || m.AwayTeamId <= 0)
+            {
+                logger.LogWarning("Skipping invalid CL match {MatchId}", m.MatchId);
+                continue;
+            }
+
+            EnsureTeamExists(db, knownTeamIds, m.HomeTeamId, m.HomeTeamName);
+            EnsureTeamExists(db, knownTeamIds, m.AwayTeamId, m.AwayTeamName);
+
+            var existing = await db.Matches.FindAsync([m.MatchId], ct);
+            if (existing is null)
+            {
+                db.Matches.Add(new Match
+                {
+                    MatchId       = m.MatchId,
+                    HomeTeamId    = m.HomeTeamId,
+                    AwayTeamId    = m.AwayTeamId,
+                    MatchDate     = m.MatchDate,
+                    Stadium       = m.Stadium,
+                    HomeScore     = m.HomeScore,
+                    AwayScore     = m.AwayScore,
+                    Status        = m.Status,
+                    CompetitionId = 2
+                });
+            }
+            else
+            {
+                existing.HomeTeamId    = m.HomeTeamId;
+                existing.AwayTeamId    = m.AwayTeamId;
+                existing.MatchDate     = m.MatchDate;
+                existing.Stadium       = m.Stadium;
+                existing.HomeScore     = m.HomeScore;
+                existing.AwayScore     = m.AwayScore;
+                existing.Status        = m.Status;
+                existing.CompetitionId = 2;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Synced {Count} CL matches", matches.Count);
     }
 
     // ── Sync squads — runs every 24 hours ────────────────────────────────────

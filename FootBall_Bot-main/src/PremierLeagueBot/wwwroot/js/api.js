@@ -40,7 +40,7 @@ const Api = (() => {
     me:          ()                   => request('/api/user/me'),
     user:        (id)                 => request(`/api/user/${id}`),
     standings:   ()                   => request('/api/standings'),
-    upcoming:    ()                   => request('/api/matches/upcoming'),
+    upcoming:    (league = 'epl')      => request(`/api/matches/upcoming?league=${league}`),
     team:        (id)                 => request(`/api/teams/${id}`),
     predictions: ()                   => request('/api/predictions'),
     savePred:    (matchId, h, a)      => request('/api/predictions', {

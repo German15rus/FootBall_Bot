@@ -57,6 +57,13 @@ public sealed class FootballApiClient : IFootballApiClient
             TimeSpan.FromMinutes(10),
             c => FetchMatchesInRangeAsync(from, to, c), ct);
 
+    public Task<IReadOnlyList<MatchDto>> GetClMatchesAsync(
+        DateTime from, DateTime to, CancellationToken ct = default)
+        => GetCachedAsync(
+            $"cl:matches:{from:yyyyMMdd}:{to:yyyyMMdd}",
+            TimeSpan.FromMinutes(10),
+            c => FetchClMatchesInRangeAsync(from, to, c), ct);
+
     public Task<IReadOnlyList<PlayerDto>> GetTeamSquadAsync(
         int teamId, CancellationToken ct = default)
         => GetCachedAsync(
@@ -79,6 +86,67 @@ public sealed class FootballApiClient : IFootballApiClient
 
     private Task<int> GetSeasonIdAsync(CancellationToken ct)
         => GetCachedAsync("pl:seasonId", TimeSpan.FromHours(24), FetchCurrentSeasonIdAsync, ct);
+
+    private Task<int> GetClSeasonIdAsync(CancellationToken ct)
+        => GetCachedAsync("cl:seasonId", TimeSpan.FromHours(24), FetchCurrentClSeasonIdAsync, ct);
+
+    private async Task<int> FetchCurrentClSeasonIdAsync(CancellationToken ct)
+    {
+        if (_opts.ClSeasonId > 0)
+        {
+            _logger.LogInformation("Using configured CL season ID: {Id}", _opts.ClSeasonId);
+            return _opts.ClSeasonId;
+        }
+
+        const int fallbackId = 737; // 2024/25 CL
+        try
+        {
+            var client = _factory.CreateClient(PlApiClient);
+            var url = $"competitions/{_opts.ClCompetitionId}/compseasons?page=0&pageSize=10";
+            using var resp = await client.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("CL compseasons fetch failed ({Status}), using fallback {Id}",
+                    resp.StatusCode, fallbackId);
+                return fallbackId;
+            }
+
+            var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            if (!root.TryGetProperty("content", out var content) || content.GetArrayLength() == 0)
+                return fallbackId;
+
+            foreach (var s in content.EnumerateArray())
+            {
+                var sid   = ParseInt(s, "id");
+                var label = s.TryGetProperty("label", out var l) ? l.GetString() : "?";
+                _logger.LogInformation("Available CL season: id={Id} label={Label}", sid, label);
+            }
+
+            // Pick the season whose label contains "2025"
+            foreach (var s in content.EnumerateArray())
+            {
+                var label = s.TryGetProperty("label", out var l) ? l.GetString() ?? "" : "";
+                if (label.Contains("2025", StringComparison.Ordinal))
+                {
+                    var id = ParseInt(s, "id");
+                    if (id > 0)
+                    {
+                        _logger.LogInformation("Resolved 2025/26 CL season ID: {Id} (label={Label})", id, label);
+                        return id;
+                    }
+                }
+            }
+
+            var newestId = ParseInt(content[0], "id");
+            if (newestId > 0) return newestId;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Exception resolving CL season ID, using fallback {Id}", fallbackId);
+        }
+
+        return fallbackId;
+    }
 
     private async Task<int> FetchCurrentSeasonIdAsync(CancellationToken ct)
     {
@@ -357,6 +425,47 @@ public sealed class FootballApiClient : IFootballApiClient
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("PL fixtures fetch failed (statuses={S}): {Code}", statuses, resp.StatusCode);
+            return [];
+        }
+
+        var root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        return root.TryGetProperty("content", out var content)
+            ? ParsePlFixtures(content)
+            : [];
+    }
+
+    // ── Champions League matches in date range ───────────────────────────────
+
+    private async Task<IReadOnlyList<MatchDto>> FetchClMatchesInRangeAsync(
+        DateTime from, DateTime to, CancellationToken ct)
+    {
+        var seasonId = await GetClSeasonIdAsync(ct);
+        var client   = _factory.CreateClient(PlApiClient);
+
+        var upcomingTask  = FetchClFixturesAsync(client, seasonId, "U,M,L", "asc",  80, ct);
+        var completedTask = FetchClFixturesAsync(client, seasonId, "C",     "desc", 80, ct);
+        await Task.WhenAll(upcomingTask, completedTask);
+
+        var all = upcomingTask.Result.Concat(completedTask.Result)
+            .DistinctBy(m => m.MatchId)
+            .Where(m => m.MatchDate >= from && m.MatchDate <= to)
+            .OrderBy(m => m.MatchDate)
+            .ToList();
+
+        _logger.LogInformation("Fetched {Count} CL matches in range {From:d}–{To:d}", all.Count, from, to);
+        return all;
+    }
+
+    private async Task<IReadOnlyList<MatchDto>> FetchClFixturesAsync(
+        HttpClient client, int seasonId, string statuses, string sort, int pageSize, CancellationToken ct)
+    {
+        var url = $"fixtures?comps={_opts.ClCompetitionId}&compSeasons={seasonId}" +
+                  $"&page=0&pageSize={pageSize}&sort={sort}&statuses={statuses}&altIds=true";
+
+        using var resp = await client.GetAsync(url, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("CL fixtures fetch failed (statuses={S}): {Code}", statuses, resp.StatusCode);
             return [];
         }
 

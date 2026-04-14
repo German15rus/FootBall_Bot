@@ -7,8 +7,11 @@ public interface IFootballApiClient
     /// <summary>Returns current EPL standings sorted by rank.</summary>
     Task<IReadOnlyList<StandingDto>> GetStandingsAsync(CancellationToken ct = default);
 
-    /// <summary>Returns matches in the given date range.</summary>
+    /// <summary>Returns EPL matches in the given date range.</summary>
     Task<IReadOnlyList<MatchDto>> GetMatchesAsync(DateTime from, DateTime to, CancellationToken ct = default);
+
+    /// <summary>Returns Champions League matches in the given date range.</summary>
+    Task<IReadOnlyList<MatchDto>> GetClMatchesAsync(DateTime from, DateTime to, CancellationToken ct = default);
 
     /// <summary>Returns squad (players) for the given team.</summary>
     Task<IReadOnlyList<PlayerDto>> GetTeamSquadAsync(int teamId, CancellationToken ct = default);
