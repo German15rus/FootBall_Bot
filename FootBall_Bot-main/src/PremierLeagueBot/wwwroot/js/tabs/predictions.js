@@ -47,12 +47,12 @@ const PredictionsTab = (() => {
     const container = document.getElementById('predictions-body');
     container.innerHTML = `
       <div class="league-picker">
-        <div class="league-card" onclick="PredictionsTab.selectLeague('epl')">
+        <div class="league-card epl" onclick="PredictionsTab.selectLeague('epl')">
           <div class="league-card-icon">🏴󠁧󠁢󠁥󠁮󠁧󠁿</div>
           <div class="league-card-name">${i18n.t('pred.league.epl')}</div>
           <div class="league-card-sub">Premier League</div>
         </div>
-        <div class="league-card" onclick="PredictionsTab.selectLeague('ucl')">
+        <div class="league-card ucl" onclick="PredictionsTab.selectLeague('ucl')">
           <div class="league-card-icon">🏆</div>
           <div class="league-card-name">${i18n.t('pred.league.ucl')}</div>
           <div class="league-card-sub">UEFA Champions League</div>

@@ -489,32 +489,35 @@ body.tg-dark .modal-tab.active {
 
 .league-card {
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 6px;
-  padding: 28px 16px;
-  background: var(--surface);
-  border: 2px solid var(--pl-border);
+  justify-content: center; gap: 8px;
+  padding: 36px 16px;
+  border: none;
   border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: border-color .15s, box-shadow .15s, transform .1s;
+  transition: filter .15s, box-shadow .15s, transform .12s;
   user-select: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
 }
-.league-card:hover,
 .league-card:active {
-  border-color: var(--pl-purple);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
-}
-body.tg-dark .league-card {
-  border-color: #333;
-}
-body.tg-dark .league-card:hover,
-body.tg-dark .league-card:active {
-  border-color: var(--pl-green);
+  transform: scale(0.97);
+  filter: brightness(0.9);
 }
 
-.league-card-icon { font-size: 40px; line-height: 1; }
-.league-card-name { font-size: 18px; font-weight: 700; color: var(--text); }
-.league-card-sub  { font-size: 12px; color: var(--text-muted); }
+/* EPL — PL purple */
+.league-card.epl {
+  background: linear-gradient(135deg, #37003c 0%, #5c1a6e 100%);
+}
+.league-card.epl:hover { box-shadow: 0 6px 24px rgba(55,0,60,0.5); }
+
+/* UCL — UEFA blue */
+.league-card.ucl {
+  background: linear-gradient(135deg, #001489 0%, #0033cc 100%);
+}
+.league-card.ucl:hover { box-shadow: 0 6px 24px rgba(0,20,137,0.5); }
+
+.league-card-icon { font-size: 44px; line-height: 1; }
+.league-card-name { font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: 0.3px; }
+.league-card-sub  { font-size: 12px; color: rgba(255,255,255,0.65); font-weight: 500; }
 
 /* Back button inside predictions tab header */
 .pred-back-btn {
