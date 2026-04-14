@@ -75,7 +75,7 @@ public static class StandingsFormatter
 
         var sb = new StringBuilder();
         sb.AppendLine($"🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>АПЛ — Таблица 2025/26</b>");
-        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}  ·  И · О · ГР</i>");
+        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}</i>  <code> И   О    ГР</code>");
         sb.AppendLine();
 
         var renderZone = emojiService is { IsReady: true }
@@ -96,9 +96,10 @@ public static class StandingsFormatter
                 ? emojiService.RenderEmblem(s.TeamName, fallback)
                 : fallback;
 
-            var gd = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
+            var gd    = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
+            var stats = $"{s.Played,2} {s.Points,3} {gd,4}";
 
-            sb.AppendLine($"{zone}<b>{rank,-3}</b>{emblem} {name,-14} {s.Played} · <b>{s.Points}</b> · {gd}");
+            sb.AppendLine($"{zone}<b>{rank,-3}</b>{emblem} {name} <code>{stats}</code>");
         }
 
         sb.AppendLine();
