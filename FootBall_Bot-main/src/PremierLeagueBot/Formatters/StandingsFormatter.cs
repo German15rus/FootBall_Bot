@@ -75,7 +75,15 @@ public static class StandingsFormatter
 
         var sb = new StringBuilder();
         sb.AppendLine($"🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>АПЛ — Таблица 2025/26</b>");
-        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}  ·  И · О · ГР</i>");
+
+        // Column positions in each data <code> block (after zone+emblem emojis ≈ 4 chars on screen):
+        // rank(2) + ". "(2) + name(3) + "   "(3) = 10 → played at code pos 10, screen pos 14
+        // + played(2) + " "(1) = 13 → points code block starts at screen pos 17
+        // + points(3) + " "(1) = 17 → gd code block starts at screen pos 21
+        // Header <code> starts at screen pos 0 (no emoji prefix), so we pad 14 chars before И:
+        // "    "(4) + "Тур "(4) + played,-2 (2) + "    "(4) = 14 chars → И at pos 14 ✓
+        var maxPlayed = standings.Max(s => s.Played);
+        sb.AppendLine($"<code>    Тур {maxPlayed,-2}    И  О   ГР</code>");
         sb.AppendLine();
 
         var renderZone = emojiService is { IsReady: true }
@@ -96,11 +104,16 @@ public static class StandingsFormatter
                 ? emojiService.RenderEmblem(s.TeamName, fallback)
                 : fallback;
 
-            var gd   = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
-            var code = $"{s.Rank,2}. {name} {s.Played,2} {s.Points,3} {gd,4}";
+            var gd    = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
+
+            // Split into three <code> blocks so points can be wrapped in <b> for bold.
+            // 3 spaces between name and played for visual breathing room.
+            var left  = $"{s.Rank,2}. {name}   {s.Played,2} ";  // 13 chars
+            var pts   = $"{s.Points,3}";                          //  3 chars (bold)
+            var right = $" {gd,4}";                               //  5 chars
 
             // zone + emblem are outside <code> so <tg-emoji> custom emoji tags render correctly
-            sb.AppendLine($"{zone}{emblem}<code>{code}</code>");
+            sb.AppendLine($"{zone}{emblem}<code>{left}</code><b><code>{pts}</code></b><code>{right}</code>");
         }
 
         sb.AppendLine();
