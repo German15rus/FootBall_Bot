@@ -75,7 +75,7 @@ public static class StandingsFormatter
 
         var sb = new StringBuilder();
         sb.AppendLine($"🏴󠁧󠁢󠁥󠁮󠁧󠁿 <b>АПЛ — Таблица 2025/26</b>");
-        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}</i>  <code> И   О    ГР</code>");
+        sb.AppendLine($"<i>Тур {standings.Max(s => s.Played)}  ·  И · О · ГР</i>");
         sb.AppendLine();
 
         var renderZone = emojiService is { IsReady: true }
@@ -84,22 +84,23 @@ public static class StandingsFormatter
 
         foreach (var s in standings)
         {
-            var zone   = renderZone(s.Rank);
-            var rank   = $"{s.Rank}.";
+            var zone = renderZone(s.Rank);
 
-            // Use short name, truncate if needed
+            // Short name — always 3 chars for alignment inside <code>
             var name = (string.IsNullOrWhiteSpace(s.ShortName) ? s.TeamName : s.ShortName);
-            if (name.Length > 14) name = name[..13] + "…";
+            if (name.Length > 3) name = name[..3];
+            name = name.PadRight(3);
 
             var fallback = GetFallbackEmoji(s.TeamName);
             var emblem   = emojiService is { IsReady: true }
                 ? emojiService.RenderEmblem(s.TeamName, fallback)
                 : fallback;
 
-            var gd    = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
-            var stats = $"{s.Played,2} {s.Points,3} {gd,4}";
+            var gd   = s.GoalDifference >= 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
+            var code = $"{s.Rank,2}. {name} {s.Played,2} {s.Points,3} {gd,4}";
 
-            sb.AppendLine($"{zone}<b>{rank,-3}</b>{emblem} {name} <code>{stats}</code>");
+            // zone + emblem are outside <code> so <tg-emoji> custom emoji tags render correctly
+            sb.AppendLine($"{zone}{emblem}<code>{code}</code>");
         }
 
         sb.AppendLine();
