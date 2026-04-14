@@ -150,7 +150,20 @@ try
     // ── Static files + CORS for Telegram Mini App ─────────────────────────────
     // wwwroot/ will contain the Mini App frontend (HTML/JS/CSS).
     app.UseDefaultFiles();   // serves index.html for "/"
-    app.UseStaticFiles();
+
+    // index.html must never be cached so deployments take effect immediately
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        OnPrepareResponse = ctx =>
+        {
+            if (ctx.File.Name == "index.html")
+            {
+                ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                ctx.Context.Response.Headers["Pragma"]        = "no-cache";
+                ctx.Context.Response.Headers["Expires"]       = "0";
+            }
+        }
+    });
     app.UseCors("TelegramMiniApp");
 
     // ── API routes ────────────────────────────────────────────────────────────
