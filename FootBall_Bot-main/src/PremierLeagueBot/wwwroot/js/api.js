@@ -47,5 +47,10 @@ const Api = (() => {
                                           method: 'POST',
                                           body: JSON.stringify({ matchId, homeScore: h, awayScore: a })
                                         }),
+    getFriends:    ()         => request('/api/friends'),
+    getFriendReqs: ()         => request('/api/friends/requests'),
+    sendFriendReq: (username) => request(`/api/friends/request/${encodeURIComponent(username.replace(/^@/, ''))}`, { method: 'POST' }),
+    acceptFriend:  (id)       => request(`/api/friends/accept/${id}`, { method: 'POST' }),
+    declineFriend: (id)       => request(`/api/friends/decline/${id}`, { method: 'POST' }),
   };
 })();

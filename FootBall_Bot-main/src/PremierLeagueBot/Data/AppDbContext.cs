@@ -13,6 +13,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Prediction> Predictions => Set<Prediction>();
     public DbSet<Achievement> Achievements => Set<Achievement>();
     public DbSet<UserAchievement> UserAchievements => Set<UserAchievement>();
+    public DbSet<Friendship> Friendships => Set<Friendship>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -91,6 +92,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(a => a.Code);
             e.Property(a => a.Code).ValueGeneratedNever();
+        });
+
+        // Friendship
+        modelBuilder.Entity<Friendship>(e =>
+        {
+            e.HasKey(f => f.Id);
+            e.HasOne(f => f.Requester)
+             .WithMany()
+             .HasForeignKey(f => f.RequesterId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(f => f.Addressee)
+             .WithMany()
+             .HasForeignKey(f => f.AddresseeId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(f => new { f.RequesterId, f.AddresseeId }).IsUnique();
+            e.HasIndex(f => f.AddresseeId);
+            e.HasIndex(f => f.Status);
         });
 
         // UserAchievement

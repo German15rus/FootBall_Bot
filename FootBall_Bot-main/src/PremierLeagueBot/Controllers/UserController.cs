@@ -70,6 +70,10 @@ public sealed class UserController(IDbContextFactory<AppDbContext> dbFactory) : 
             .GroupBy(p => System.Globalization.ISOWeek.GetWeekOfYear(p.Match.MatchDate))
             .Count(g => g.Count() >= 3 && g.All(p => (p.PointsAwarded ?? 0) >= 3));
 
+        var friendsCount = await db.Friendships
+            .CountAsync(f => (f.RequesterId == telegramId || f.AddresseeId == telegramId)
+                          && f.Status == "accepted", ct);
+
         return new
         {
             telegramId   = user.TelegramId,
@@ -83,6 +87,7 @@ public sealed class UserController(IDbContextFactory<AppDbContext> dbFactory) : 
                 name     = user.FavoriteTeam.Name,
                 emblemUrl= user.FavoriteTeam.EmblemUrl
             },
+            friendsCount,
             stats = new
             {
                 totalPoints,

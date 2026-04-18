@@ -610,6 +610,129 @@ body.tg-dark .shop-btn { background: var(--pl-green); color: var(--pl-purple); }
 }
 body.tg-dark .prize-exchange-btn { background: var(--pl-green); color: var(--pl-purple); }
 
+/* ── Friends System ──────────────────────────────────────────────────────────── */
+
+/* Bell button in profile header */
+.profile-header { position: relative; }
+.bell-btn-wrap {
+  position: absolute; top: 16px; right: 16px;
+  display: inline-flex;
+}
+.bell-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; cursor: pointer; color: #fff;
+  transition: background .2s;
+}
+.bell-btn:hover { background: rgba(255,255,255,0.25); }
+.bell-badge {
+  position: absolute; top: -4px; right: -4px;
+  background: var(--pl-red); color: #fff;
+  font-size: 9px; font-weight: 800;
+  min-width: 16px; height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Friends count stat row */
+.friends-stat-row {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pl-border);
+  cursor: pointer;
+  transition: background .15s;
+  user-select: none;
+}
+.friends-stat-row:hover { background: var(--surface); }
+.friends-stat-count {
+  font-size: 22px; font-weight: 900;
+  color: var(--pl-purple);
+}
+body.tg-dark .friends-stat-count { color: var(--pl-green); }
+.friends-stat-label {
+  font-size: 10px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+
+/* Small avatars in friend lists */
+.friend-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  object-fit: cover; flex-shrink: 0;
+}
+.friend-avatar-ph {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--pl-green); color: var(--pl-purple);
+  font-size: 16px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Friend request item */
+.friend-req-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pl-border);
+}
+.friend-req-info { flex: 1; min-width: 0; }
+.friend-req-name { font-size: 14px; font-weight: 700; }
+.friend-req-nick { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.friend-req-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.btn-accept, .btn-decline {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; cursor: pointer; border: none;
+  transition: opacity .2s;
+}
+.btn-accept  { background: #1a7a1a; color: #fff; }
+.btn-decline { background: var(--pl-red); color: #fff; }
+.btn-accept:hover, .btn-decline:hover { opacity: 0.8; }
+
+/* Friend list item */
+.friend-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pl-border);
+}
+.friend-item-info { flex: 1; min-width: 0; }
+.friend-item-name { font-size: 14px; font-weight: 700; }
+.friend-item-nick { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+/* Friend search bar */
+.friend-search {
+  display: flex; gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pl-border);
+  flex-shrink: 0;
+}
+.friend-search-input {
+  flex: 1; padding: 9px 12px;
+  border: 1px solid var(--pl-border);
+  border-radius: var(--radius);
+  font-size: 14px; font-family: var(--font);
+  background: var(--surface); color: var(--text);
+  outline: none;
+}
+.friend-search-input:focus { border-color: var(--pl-purple); }
+body.tg-dark .friend-search-input:focus { border-color: var(--pl-green); }
+.friend-search-btn {
+  padding: 9px 14px;
+  background: var(--pl-purple); color: #fff;
+  border: none; border-radius: var(--radius);
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: opacity .2s; white-space: nowrap;
+}
+body.tg-dark .friend-search-btn { background: var(--pl-green); color: var(--pl-purple); }
+.friend-search-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.friend-search-msg {
+  padding: 8px 16px;
+  font-size: 12px; font-weight: 600;
+  flex-shrink: 0;
+}
+.friend-search-msg.success { color: #1a7a1a; }
+.friend-search-msg.error   { color: var(--pl-red); }
+
 /* ── Scrollbar ───────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
