@@ -250,6 +250,12 @@ const ProfileTab = (() => {
     // Shop button
     html += `<button class="shop-btn" id="open-shop-btn">🛍️ ${t('shop.btn')}</button>`;
 
+    // Prediction buttons
+    html += `<div class="pred-btns-row">
+      <button class="pred-action-btn" id="open-history-btn">${t('profile.historyBtn')}</button>
+      <button class="pred-action-btn" id="open-active-btn">${t('profile.activeBtn')}</button>
+    </div>`;
+
     // Favourite team
     if (data.favoriteTeam) {
       html += `<div class="section-title">${t('profile.fav')}</div>
@@ -279,12 +285,6 @@ const ProfileTab = (() => {
         <div class="empty-sub">${t('profile.noAchievements')}</div>
       </div>`;
     }
-
-    // Prediction buttons
-    html += `<div class="pred-btns-row">
-      <button class="pred-action-btn" id="open-history-btn">${t('profile.historyBtn')}</button>
-      <button class="pred-action-btn" id="open-active-btn">${t('profile.activeBtn')}</button>
-    </div>`;
 
     container.innerHTML = html;
 
