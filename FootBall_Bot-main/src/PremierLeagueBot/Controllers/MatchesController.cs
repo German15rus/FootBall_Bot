@@ -54,7 +54,7 @@ public sealed class MatchesController(
             stadium       = m.Stadium,
             status        = m.Status,
             competitionId = m.CompetitionId,
-            deadlineUtc   = m.MatchDate.AddMinutes(-5),
+            deadlineUtc   = m.MatchDate,
             homeTeam      = new { id = m.HomeTeamId, name = m.HomeTeam.Name, emblemUrl = m.HomeTeam.EmblemUrl },
             awayTeam      = new { id = m.AwayTeamId, name = m.AwayTeam.Name, emblemUrl = m.AwayTeam.EmblemUrl },
             homeScore     = m.HomeScore,

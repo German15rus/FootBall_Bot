@@ -44,7 +44,7 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
         if (match.Status != "scheduled")
             return UnprocessableEntity(new { error = "Match has already started or finished" });
 
-        var deadline = match.MatchDate.AddMinutes(-5);
+        var deadline = match.MatchDate;
         if (DateTime.UtcNow >= deadline)
             return UnprocessableEntity(new { error = "Prediction deadline has passed", deadline });
 
@@ -86,7 +86,7 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
         id             = p.Id,
         matchId        = p.MatchId,
         matchDate      = p.Match.MatchDate,
-        deadlineUtc    = p.Match.MatchDate.AddMinutes(-5),
+        deadlineUtc    = p.Match.MatchDate,
         homeTeam       = new { id = p.Match.HomeTeamId, name = p.Match.HomeTeam.Name, emblemUrl = p.Match.HomeTeam.EmblemUrl },
         awayTeam       = new { id = p.Match.AwayTeamId, name = p.Match.AwayTeam.Name, emblemUrl = p.Match.AwayTeam.EmblemUrl },
         predictedHome  = p.PredictedHomeScore,

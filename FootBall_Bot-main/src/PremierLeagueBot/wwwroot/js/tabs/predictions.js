@@ -60,6 +60,14 @@ const PredictionsTab = (() => {
       </div>`;
   }
 
+  function updateBanner() {
+    const banner = document.getElementById('pred-banner');
+    if (!banner) return;
+    const key = _league ? 'predictions.closeBanner' : 'predictions.rulesBanner';
+    banner.firstElementChild.setAttribute('data-i18n', key);
+    banner.firstElementChild.textContent = i18n.t(key);
+  }
+
   function renderLeagueHeader() {
     const tab = document.getElementById('tab-predictions');
     const titleEl = tab.querySelector('.tab-title');
@@ -81,7 +89,7 @@ const PredictionsTab = (() => {
       backBtn = document.createElement('button');
       backBtn.id        = 'pred-back-btn';
       backBtn.className = 'pred-back-btn';
-      backBtn.onclick   = () => { _league = null; load(); };
+      backBtn.onclick   = () => { _league = null; updateBanner(); load(); };
       tab.querySelector('.tab-header').prepend(backBtn);
     }
     backBtn.innerHTML   = `← ${i18n.t('pred.back')}`;
@@ -93,6 +101,7 @@ const PredictionsTab = (() => {
     _matches = null;
     _myPreds = {};
     renderLeagueHeader();
+    updateBanner();
     loadMatches();
   }
 
@@ -232,6 +241,7 @@ const PredictionsTab = (() => {
 
   function load() {
     renderLeagueHeader();
+    updateBanner();
     if (!_league) {
       renderLeaguePicker();
     } else {

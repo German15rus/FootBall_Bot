@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>EPL Predictions</title>
-  <link rel="stylesheet" href="/css/style.css?v=4" />
+  <link rel="stylesheet" href="/css/style.css?v=5" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -64,9 +64,8 @@
         <h1 class="tab-title" data-i18n="predictions.title">Predictions</h1>
         <p class="tab-subtitle" data-i18n="predictions.subtitle">Next 7 days</p>
       </div>
-      <div class="coeff-banner">
-        <span class="coeff-icon">⚡</span>
-        <span data-i18n="predictions.coeffBanner">Dynamic scoring: some matches award up to 5 pts for exact scores!</span>
+      <div class="coeff-banner" id="pred-banner">
+        <span data-i18n="predictions.rulesBanner">📋 Правила: угадал исход — 1 балл · угадал счёт — 3 балла</span>
       </div>
       <div id="predictions-body" class="content-body"></div>
     </div>
@@ -96,12 +95,12 @@
 
   </div><!-- /app -->
 
-  <script src="/js/i18n.js?v=4"></script>
-  <script src="/js/api.js?v=4"></script>
-  <script src="/js/tabs/standings.js?v=4"></script>
-  <script src="/js/tabs/matches.js?v=4"></script>
-  <script src="/js/tabs/predictions.js?v=4"></script>
-  <script src="/js/tabs/profile.js?v=4"></script>
-  <script src="/js/app.js?v=4"></script>
+  <script src="/js/i18n.js?v=5"></script>
+  <script src="/js/api.js?v=5"></script>
+  <script src="/js/tabs/standings.js?v=5"></script>
+  <script src="/js/tabs/matches.js?v=5"></script>
+  <script src="/js/tabs/predictions.js?v=5"></script>
+  <script src="/js/tabs/profile.js?v=5"></script>
+  <script src="/js/app.js?v=5"></script>
 </body>
 </html>
