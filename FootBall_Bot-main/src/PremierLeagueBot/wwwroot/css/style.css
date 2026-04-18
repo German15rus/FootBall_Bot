@@ -533,6 +533,53 @@ body.tg-dark .modal-tab.active {
 }
 body.tg-dark .pred-back-btn { color: var(--pl-green); }
 
+/* ── Shop button (in profile) ────────────────────────────────────────────────── */
+.shop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  margin: 16px 0;
+  background: var(--pl-purple);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+}
+body.tg-dark .shop-btn { background: var(--pl-green); color: var(--pl-purple); }
+
+/* ── Prize cards (inside shop modal) ─────────────────────────────────────────── */
+.prize-grid { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.prize-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 14px;
+}
+.prize-icon  { font-size: 28px; flex-shrink: 0; }
+.prize-info  { flex: 1; min-width: 0; }
+.prize-name  { font-weight: 600; font-size: 14px; }
+.prize-cost  { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.prize-exchange-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  background: var(--pl-purple);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+body.tg-dark .prize-exchange-btn { background: var(--pl-green); color: var(--pl-purple); }
+
 /* ── Scrollbar ───────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }

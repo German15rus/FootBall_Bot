@@ -1,6 +1,72 @@
 const ProfileTab = (() => {
   let _data = null;
 
+  // ── Shop ───────────────────────────────────────────────────────────────────
+
+  const PRIZES = [
+    { icon: '🎽', nameRu: 'Футболка любимой команды', nameEn: 'Favourite club shirt',  cost: 500  },
+    { icon: '🎮', nameRu: 'FIFA 25',                  nameEn: 'FIFA 25',               cost: 800  },
+    { icon: '⚽', nameRu: 'Мяч с автографом',         nameEn: 'Signed match ball',     cost: 1000 },
+    { icon: '🎟️', nameRu: 'Билет на матч',            nameEn: 'Match ticket',          cost: 2000 },
+    { icon: '🏆', nameRu: 'Кубок болельщика',         nameEn: 'Fan trophy',            cost: 5000 },
+  ];
+
+  function ensureShopModal() {
+    if (document.getElementById('shop-modal')) return;
+    const t = i18n.t.bind(i18n);
+
+    const prizesHtml = PRIZES.map(p => {
+      const name = i18n.lang === 'ru' ? p.nameRu : p.nameEn;
+      return `<div class="prize-card">
+        <div class="prize-icon">${p.icon}</div>
+        <div class="prize-info">
+          <div class="prize-name">${escHtml(name)}</div>
+          <div class="prize-cost">${p.cost} ${t('shop.points')}</div>
+        </div>
+        <button class="prize-exchange-btn" data-exchange="1">${t('shop.exchange')}</button>
+      </div>`;
+    }).join('');
+
+    const el = document.createElement('div');
+    el.innerHTML = `
+      <div id="shop-modal" class="modal hidden">
+        <div class="modal-backdrop" id="shop-backdrop"></div>
+        <div class="modal-sheet">
+          <div class="modal-header">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:22px">🛍️</span>
+              <h2>${t('shop.title')}</h2>
+            </div>
+            <button class="modal-close" id="shop-close">✕</button>
+          </div>
+          <p style="margin:0 16px 4px;font-size:13px;color:var(--text-muted)">${t('shop.subtitle')}</p>
+          <div class="modal-body prize-grid">${prizesHtml}</div>
+        </div>
+      </div>`;
+    document.body.appendChild(el.firstElementChild);
+
+    document.getElementById('shop-close').addEventListener('click', closeShop);
+    document.getElementById('shop-backdrop').addEventListener('click', closeShop);
+    document.getElementById('shop-modal').addEventListener('click', e => {
+      if (e.target.dataset.exchange) {
+        const tg = window.Telegram?.WebApp;
+        if (tg?.showAlert) tg.showAlert(t('shop.unavailable'));
+        else alert(t('shop.unavailable'));
+      }
+    });
+  }
+
+  function openShop() {
+    ensureShopModal();
+    document.getElementById('shop-modal').classList.remove('hidden');
+    document.querySelector('.app').style.overflow = 'hidden';
+  }
+
+  function closeShop() {
+    document.getElementById('shop-modal').classList.add('hidden');
+    document.querySelector('.app').style.overflow = '';
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function avatarHtml(user) {
@@ -65,6 +131,9 @@ const ProfileTab = (() => {
       </div>
     </div>`;
 
+    // Shop button
+    html += `<button class="shop-btn" id="open-shop-btn">🛍️ ${t('shop.btn')}</button>`;
+
     // Favourite team
     if (data.favoriteTeam) {
       html += `<div class="section-title">${t('profile.fav')}</div>
@@ -119,6 +188,8 @@ const ProfileTab = (() => {
     }
 
     container.innerHTML = html;
+
+    document.getElementById('open-shop-btn')?.addEventListener('click', openShop);
   }
 
   // ── Load ───────────────────────────────────────────────────────────────────

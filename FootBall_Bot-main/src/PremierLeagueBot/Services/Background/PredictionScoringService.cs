@@ -10,10 +10,9 @@ namespace PremierLeagueBot.Services.Background;
 /// awards points and checks for new achievements.
 ///
 /// Scoring rules:
+///   0 pts — incorrect outcome (wrong W/D/L)
 ///   1 pt  — correct outcome (W/D/L) but wrong score
-///   3 pts — exact score (default)
-///   4 pts — exact score, table-position gap ≥ 10
-///   5 pts — exact score, table-position gap ≥ 15  (dynamic, hidden from user)
+///   3 pts — exact score
 /// </summary>
 public sealed class PredictionScoringService(
     IServiceScopeFactory scopeFactory,
@@ -45,8 +44,7 @@ public sealed class PredictionScoringService(
 
         // Find predictions for finished matches that haven't been scored yet
         var unscored = await db.Predictions
-            .Include(p => p.Match).ThenInclude(m => m.HomeTeam)
-            .Include(p => p.Match).ThenInclude(m => m.AwayTeam)
+            .Include(p => p.Match)
             .Where(p => !p.IsScored
                      && p.Match.Status == "finished"
                      && p.Match.HomeScore.HasValue
@@ -66,9 +64,7 @@ public sealed class PredictionScoringService(
                 prediction.PredictedHomeScore,
                 prediction.PredictedAwayScore,
                 actualHome,
-                actualAway,
-                prediction.Match.HomeTeam.Position,
-                prediction.Match.AwayTeam.Position);
+                actualAway);
 
             prediction.IsScored = true;
             affectedUsers.Add(prediction.TelegramId);
@@ -86,23 +82,13 @@ public sealed class PredictionScoringService(
 
     private static int CalculatePoints(
         int predHome, int predAway,
-        int actualHome, int actualAway,
-        int? homePos, int? awayPos)
+        int actualHome, int actualAway)
     {
-        bool exactScore   = predHome == actualHome && predAway == actualAway;
+        bool exactScore     = predHome == actualHome && predAway == actualAway;
         bool correctOutcome = Outcome(predHome, predAway) == Outcome(actualHome, actualAway);
 
         if (!correctOutcome) return 0;
         if (!exactScore)     return 1;
-
-        // Dynamic coefficient for exact scores
-        if (homePos.HasValue && awayPos.HasValue)
-        {
-            var gap = Math.Abs(homePos.Value - awayPos.Value);
-            if (gap >= 15) return 5;
-            if (gap >= 10) return 4;
-        }
-
         return 3;
     }
 

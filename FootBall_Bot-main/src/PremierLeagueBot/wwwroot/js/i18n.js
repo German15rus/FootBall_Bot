@@ -36,6 +36,12 @@ const TRANSLATIONS = {
     'profile.noAchievements': 'No achievements yet',
     'profile.you': 'my',
     'profile.actual': 'actual',
+    'shop.btn':         'Shop',
+    'shop.title':       'Shop',
+    'shop.subtitle':    'Exchange points for prizes',
+    'shop.exchange':    'Exchange',
+    'shop.unavailable': 'This feature is not yet available',
+    'shop.points':      'pts',
   },
   ru: {
     'nav.standings':   'Таблица',
@@ -74,6 +80,12 @@ const TRANSLATIONS = {
     'profile.noAchievements': 'Пока нет достижений',
     'profile.you': 'мой',
     'profile.actual': 'факт',
+    'shop.btn':         'Магазин',
+    'shop.title':       'Магазин',
+    'shop.subtitle':    'Обменяй очки на призы',
+    'shop.exchange':    'Обменять',
+    'shop.unavailable': 'Эта функция пока не доступна',
+    'shop.points':      'очков',
   }
 };
 
