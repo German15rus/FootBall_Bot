@@ -533,6 +533,36 @@ body.tg-dark .modal-tab.active {
 }
 body.tg-dark .pred-back-btn { color: var(--pl-green); }
 
+/* ── Prediction buttons row (in profile) ────────────────────────────────────── */
+.pred-btns-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px; padding: 12px 16px 4px;
+}
+.pred-action-btn {
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; padding: 13px 8px;
+  background: var(--pl-purple); color: #fff;
+  border-radius: 12px; font-size: 13px; font-weight: 600;
+  cursor: pointer; text-align: center;
+}
+body.tg-dark .pred-action-btn { background: var(--pl-green); color: var(--pl-purple); }
+
+/* Active prediction card (inside modal) */
+.active-pred-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pl-border);
+}
+.active-pred-match { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.active-pred-score { font-size: 20px; font-weight: 900; color: var(--pl-purple); }
+body.tg-dark .active-pred-score { color: var(--pl-green); }
+.active-pred-meta  { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.live-badge {
+  display: inline-block; font-size: 9px; font-weight: 700;
+  background: var(--pl-red); color: #fff;
+  padding: 2px 6px; border-radius: 4px;
+  text-transform: uppercase; margin-left: 6px;
+}
+
 /* ── Shop button (in profile) ────────────────────────────────────────────────── */
 .shop-btn {
   display: flex;

@@ -80,7 +80,7 @@ try
                   .AllowAnyMethod();
         });
     });
-
+    // узнать для чего
     // ── Memory cache ─────────────────────────────────────────────────────────
     builder.Services.AddMemoryCache();
 

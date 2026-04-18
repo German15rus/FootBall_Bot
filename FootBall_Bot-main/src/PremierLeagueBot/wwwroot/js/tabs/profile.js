@@ -67,6 +67,122 @@ const ProfileTab = (() => {
     document.querySelector('.app').style.overflow = '';
   }
 
+  // ── History Modal ──────────────────────────────────────────────────────────
+
+  function openHistoryModal(history) {
+    const t = i18n.t.bind(i18n);
+    let modal = document.getElementById('history-modal');
+    if (!modal) {
+      const el = document.createElement('div');
+      el.innerHTML = `
+        <div id="history-modal" class="modal hidden">
+          <div class="modal-backdrop" id="history-backdrop"></div>
+          <div class="modal-sheet">
+            <div class="modal-header">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:22px">📋</span>
+                <h2>${t('profile.historyBtn')}</h2>
+              </div>
+              <button class="modal-close" id="history-close">✕</button>
+            </div>
+            <div class="modal-body" id="history-modal-body"></div>
+          </div>
+        </div>`;
+      document.body.appendChild(el.firstElementChild);
+      modal = document.getElementById('history-modal');
+      document.getElementById('history-close').addEventListener('click', closeHistoryModal);
+      document.getElementById('history-backdrop').addEventListener('click', closeHistoryModal);
+    }
+
+    const body = document.getElementById('history-modal-body');
+    if (history.length > 0) {
+      body.innerHTML = history.map(h => {
+        const pts = h.pointsAwarded;
+        const cls = pts !== null && pts !== undefined ? ptsCls(pts) : '';
+        const ptsDisp = pts !== null && pts !== undefined ? `+${pts}` : '–';
+        const score = h.actualHome !== null
+          ? `${h.predictedHome}–${h.predictedAway} / ${h.actualHome}–${h.actualAway}`
+          : `${h.predictedHome}–${h.predictedAway}`;
+        return `<div class="history-item">
+          <div class="history-match">${escHtml(h.homeTeam)} – ${escHtml(h.awayTeam)}</div>
+          <div class="history-scores">${score}</div>
+          <div class="history-pts ${cls}">${ptsDisp}</div>
+        </div>`;
+      }).join('');
+    } else {
+      body.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">🔮</div>
+        <div class="empty-sub">${t('profile.noHistory')}</div>
+      </div>`;
+    }
+
+    modal.classList.remove('hidden');
+    document.querySelector('.app').style.overflow = 'hidden';
+  }
+
+  function closeHistoryModal() {
+    document.getElementById('history-modal').classList.add('hidden');
+    document.querySelector('.app').style.overflow = '';
+  }
+
+  // ── Active Predictions Modal ───────────────────────────────────────────────
+
+  function openActiveModal(active) {
+    const t = i18n.t.bind(i18n);
+    let modal = document.getElementById('active-modal');
+    if (!modal) {
+      const el = document.createElement('div');
+      el.innerHTML = `
+        <div id="active-modal" class="modal hidden">
+          <div class="modal-backdrop" id="active-backdrop"></div>
+          <div class="modal-sheet">
+            <div class="modal-header">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:22px">⏳</span>
+                <h2>${t('profile.activeBtn')}</h2>
+              </div>
+              <button class="modal-close" id="active-close">✕</button>
+            </div>
+            <div class="modal-body" id="active-modal-body"></div>
+          </div>
+        </div>`;
+      document.body.appendChild(el.firstElementChild);
+      modal = document.getElementById('active-modal');
+      document.getElementById('active-close').addEventListener('click', closeActiveModal);
+      document.getElementById('active-backdrop').addEventListener('click', closeActiveModal);
+    }
+
+    const body = document.getElementById('active-modal-body');
+    if (active.length > 0) {
+      body.innerHTML = active.map(p => {
+        const isLive = p.matchStatus === 'live';
+        const matchDateStr = new Date(p.matchDate).toLocaleDateString(
+          i18n.lang === 'ru' ? 'ru-RU' : 'en-GB',
+          { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }
+        );
+        const liveBadge = isLive ? `<span class="live-badge">LIVE</span>` : '';
+        return `<div class="active-pred-item">
+          <div class="active-pred-match">${escHtml(p.homeTeam)} – ${escHtml(p.awayTeam)}${liveBadge}</div>
+          <div class="active-pred-score">${p.predictedHome}–${p.predictedAway}</div>
+          <div class="active-pred-meta">${matchDateStr}</div>
+        </div>`;
+      }).join('');
+    } else {
+      body.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">⏳</div>
+        <div class="empty-sub">${t('profile.noActive')}</div>
+      </div>`;
+    }
+
+    modal.classList.remove('hidden');
+    document.querySelector('.app').style.overflow = 'hidden';
+  }
+
+  function closeActiveModal() {
+    document.getElementById('active-modal').classList.add('hidden');
+    document.querySelector('.app').style.overflow = '';
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function avatarHtml(user) {
@@ -164,32 +280,17 @@ const ProfileTab = (() => {
       </div>`;
     }
 
-    // History
-    html += `<div class="section-title">${t('profile.history')}</div>`;
-    if (data.history && data.history.length > 0) {
-      html += data.history.map(h => {
-        const pts = h.pointsAwarded;
-        const cls = pts !== null && pts !== undefined ? ptsCls(pts) : '';
-        const ptsDisp = pts !== null && pts !== undefined ? `+${pts}` : '–';
-        const score = h.actualHome !== null
-          ? `${h.predictedHome}–${h.predictedAway} / ${h.actualHome}–${h.actualAway}`
-          : `${h.predictedHome}–${h.predictedAway}`;
-        return `<div class="history-item">
-          <div class="history-match">${escHtml(h.homeTeam)} – ${escHtml(h.awayTeam)}</div>
-          <div class="history-scores">${score}</div>
-          <div class="history-pts ${cls}">${ptsDisp}</div>
-        </div>`;
-      }).join('');
-    } else {
-      html += `<div class="empty-state" style="padding:20px">
-        <div class="empty-icon">🔮</div>
-        <div class="empty-sub">${t('profile.noHistory')}</div>
-      </div>`;
-    }
+    // Prediction buttons
+    html += `<div class="pred-btns-row">
+      <button class="pred-action-btn" id="open-history-btn">${t('profile.historyBtn')}</button>
+      <button class="pred-action-btn" id="open-active-btn">${t('profile.activeBtn')}</button>
+    </div>`;
 
     container.innerHTML = html;
 
     document.getElementById('open-shop-btn')?.addEventListener('click', openShop);
+    document.getElementById('open-history-btn')?.addEventListener('click', () => openHistoryModal(data.history || []));
+    document.getElementById('open-active-btn')?.addEventListener('click', () => openActiveModal(data.activePredictions || []));
   }
 
   // ── Load ───────────────────────────────────────────────────────────────────

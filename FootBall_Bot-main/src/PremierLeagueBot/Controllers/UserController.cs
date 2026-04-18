@@ -42,6 +42,14 @@ public sealed class UserController(IDbContextFactory<AppDbContext> dbFactory) : 
             .Include(p => p.Match).ThenInclude(m => m.AwayTeam)
             .Where(p => p.TelegramId == telegramId && p.IsScored)
             .OrderByDescending(p => p.Match.MatchDate)
+            .Take(10)
+            .ToListAsync(ct);
+
+        var activePredictions = await db.Predictions
+            .Include(p => p.Match).ThenInclude(m => m.HomeTeam)
+            .Include(p => p.Match).ThenInclude(m => m.AwayTeam)
+            .Where(p => p.TelegramId == telegramId && !p.IsScored)
+            .OrderBy(p => p.Match.MatchDate)
             .ToListAsync(ct);
 
         var achievements = await db.UserAchievements
@@ -109,6 +117,18 @@ public sealed class UserController(IDbContextFactory<AppDbContext> dbFactory) : 
                 actualAway       = p.Match.AwayScore,
                 pointsAwarded    = p.PointsAwarded,
                 updatedAt        = p.UpdatedAt
+            }),
+            activePredictions = activePredictions.Select(p => new
+            {
+                matchId       = p.MatchId,
+                matchDate     = p.Match.MatchDate,
+                homeTeam      = p.Match.HomeTeam.Name,
+                awayTeam      = p.Match.AwayTeam.Name,
+                homeEmblem    = p.Match.HomeTeam.EmblemUrl,
+                awayEmblem    = p.Match.AwayTeam.EmblemUrl,
+                predictedHome = p.PredictedHomeScore,
+                predictedAway = p.PredictedAwayScore,
+                matchStatus   = p.Match.Status
             })
         };
     }
