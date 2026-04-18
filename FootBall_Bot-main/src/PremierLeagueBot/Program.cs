@@ -136,8 +136,9 @@ try
         await db.Database.MigrateAsync();
         Log.Information("Database migrations applied");
 
-        // Enable WAL mode for better concurrency (bot + Mini App API writing in parallel)
-        await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+        // WAL mode — только для SQLite (PostgreSQL не поддерживает PRAGMA)
+        if (db.Database.IsSqlite())
+            await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 
         // Seed achievement definitions
         var achievements = scope.ServiceProvider.GetRequiredService<AchievementService>();
