@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PremierLeagueBot.Data;
 using PremierLeagueBot.Data.Entities;
 using PremierLeagueBot.Infrastructure;
+using Serilog;
 
 namespace PremierLeagueBot.Controllers;
 
@@ -35,49 +36,57 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
         if (req.HomeScore < 0 || req.AwayScore < 0 || req.HomeScore > 20 || req.AwayScore > 20)
             return BadRequest(new { error = "Score must be between 0 and 20" });
 
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        var match = await db.Matches
-            .Include(m => m.HomeTeam)
-            .Include(m => m.AwayTeam)
-            .FirstOrDefaultAsync(m => m.MatchId == req.MatchId, ct);
-        if (match is null)
-            return NotFound(new { error = "Match not found" });
-
-        if (match.Status != "scheduled")
-            return UnprocessableEntity(new { error = "Match has already started or finished" });
-
-        var deadline = match.MatchDate;
-        if (DateTime.UtcNow >= deadline)
-            return UnprocessableEntity(new { error = "Prediction deadline has passed", deadline });
-
-        var existing = await db.Predictions
-            .FirstOrDefaultAsync(p => p.TelegramId == CurrentUser.TelegramId && p.MatchId == req.MatchId, ct);
-
-        if (existing is null)
+        try
         {
-            existing = new Prediction
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+            var match = await db.Matches
+                .Include(m => m.HomeTeam)
+                .Include(m => m.AwayTeam)
+                .FirstOrDefaultAsync(m => m.MatchId == req.MatchId, ct);
+            if (match is null)
+                return NotFound(new { error = "Match not found" });
+
+            if (match.Status != "scheduled")
+                return UnprocessableEntity(new { error = "Match has already started or finished" });
+
+            var deadline = match.MatchDate;
+            if (DateTime.UtcNow >= deadline)
+                return UnprocessableEntity(new { error = "Prediction deadline has passed", deadline });
+
+            var existing = await db.Predictions
+                .FirstOrDefaultAsync(p => p.TelegramId == CurrentUser.TelegramId && p.MatchId == req.MatchId, ct);
+
+            if (existing is null)
             {
-                TelegramId           = CurrentUser.TelegramId,
-                MatchId              = req.MatchId,
-                PredictedHomeScore   = req.HomeScore,
-                PredictedAwayScore   = req.AwayScore,
-                CreatedAt            = DateTime.UtcNow,
-                UpdatedAt            = DateTime.UtcNow
-            };
-            db.Predictions.Add(existing);
+                existing = new Prediction
+                {
+                    TelegramId           = CurrentUser.TelegramId,
+                    MatchId              = req.MatchId,
+                    PredictedHomeScore   = req.HomeScore,
+                    PredictedAwayScore   = req.AwayScore,
+                    CreatedAt            = DateTime.UtcNow,
+                    UpdatedAt            = DateTime.UtcNow
+                };
+                db.Predictions.Add(existing);
+            }
+            else
+            {
+                existing.PredictedHomeScore = req.HomeScore;
+                existing.PredictedAwayScore = req.AwayScore;
+                existing.UpdatedAt          = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync(ct);
+
+            existing.Match = match;
+            return Ok(MapPrediction(existing));
         }
-        else
+        catch (Exception ex)
         {
-            existing.PredictedHomeScore = req.HomeScore;
-            existing.PredictedAwayScore = req.AwayScore;
-            existing.UpdatedAt          = DateTime.UtcNow;
+            Log.Error(ex, "Error saving prediction matchId={MatchId} userId={UserId}", req.MatchId, CurrentUser.TelegramId);
+            return StatusCode(500, new { error = "Failed to save prediction. Please try again." });
         }
-
-        await db.SaveChangesAsync(ct);
-
-        existing.Match = match;
-        return Ok(MapPrediction(existing));
     }
 
     private static object MapPrediction(Prediction p) => new
@@ -86,8 +95,8 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
         matchId        = p.MatchId,
         matchDate      = p.Match.MatchDate,
         deadlineUtc    = p.Match.MatchDate,
-        homeTeam       = new { id = p.Match.HomeTeamId, name = p.Match.HomeTeam.Name, emblemUrl = p.Match.HomeTeam.EmblemUrl },
-        awayTeam       = new { id = p.Match.AwayTeamId, name = p.Match.AwayTeam.Name, emblemUrl = p.Match.AwayTeam.EmblemUrl },
+        homeTeam       = new { id = p.Match.HomeTeamId, name = p.Match.HomeTeam?.Name ?? "?", emblemUrl = p.Match.HomeTeam?.EmblemUrl },
+        awayTeam       = new { id = p.Match.AwayTeamId, name = p.Match.AwayTeam?.Name ?? "?", emblemUrl = p.Match.AwayTeam?.EmblemUrl },
         predictedHome  = p.PredictedHomeScore,
         predictedAway  = p.PredictedAwayScore,
         actualHome     = p.Match.HomeScore,
