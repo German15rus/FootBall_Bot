@@ -10,8 +10,8 @@ namespace PremierLeagueBot.Infrastructure;
 /// </summary>
 public static class TelegramInitDataValidator
 {
-    /// <summary>Maximum age of initData before it is considered expired (Telegram: 24 h).</summary>
-    private static readonly TimeSpan MaxAge = TimeSpan.FromHours(24);
+    /// <summary>Maximum age of initData. Using 7 days because session tokens handle long-lived auth.</summary>
+    private static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
 
     public static bool TryValidate(string initData, string botToken, out ParsedInitData parsed)
     {

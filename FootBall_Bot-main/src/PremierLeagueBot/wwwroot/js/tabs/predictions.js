@@ -195,6 +195,7 @@ const PredictionsTab = (() => {
       btn.classList.add('saved');
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
     } catch(e) {
+      console.error('[save prediction] status:', e.status, 'data:', e.data, 'message:', e.message);
       if (e.status === 422) {
         // Match started or deadline passed — update card to closed state
         const sir = document.getElementById(`sir-${matchId}`);
@@ -203,6 +204,9 @@ const PredictionsTab = (() => {
         if (saveBtnEl) saveBtnEl.remove();
         const deadline = document.querySelector(`#pcard-${matchId} .pred-deadline`);
         if (deadline) deadline.textContent = i18n.t('pred.matchClosed');
+      } else if (e.status === 401) {
+        btn.textContent = i18n.lang === 'ru' ? 'ПЕРЕЗАПУСТИ ПРИЛОЖЕНИЕ' : 'REOPEN THE APP';
+        setTimeout(() => { btn.textContent = i18n.t('pred.save'); btn.disabled = false; }, 3000);
       } else {
         btn.textContent = e.data?.error || i18n.t('pred.errorGeneric');
         setTimeout(() => {
