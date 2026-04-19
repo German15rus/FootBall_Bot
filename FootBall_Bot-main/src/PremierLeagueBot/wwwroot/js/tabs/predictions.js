@@ -181,7 +181,7 @@ const PredictionsTab = (() => {
 
   // ── Save prediction ────────────────────────────────────────────────────────
 
-  async function save(matchId) {
+  async function save(matchId, _retry = false) {
     const btn  = document.getElementById(`savebtn-${matchId}`);
     const home = parseInt(document.getElementById(`hval-${matchId}`).textContent);
     const away = parseInt(document.getElementById(`aval-${matchId}`).textContent);
@@ -207,6 +207,10 @@ const PredictionsTab = (() => {
       } else if (e.status === 401) {
         btn.textContent = i18n.lang === 'ru' ? 'ПЕРЕЗАПУСТИ ПРИЛОЖЕНИЕ' : 'REOPEN THE APP';
         setTimeout(() => { btn.textContent = i18n.t('pred.save'); btn.disabled = false; }, 3000);
+      } else if (!_retry) {
+        // Auto-retry once for transient network/server errors
+        setTimeout(() => save(matchId, true), 1200);
+        return;
       } else {
         btn.textContent = e.data?.error || i18n.t('pred.errorGeneric');
         setTimeout(() => {

@@ -20,7 +20,7 @@ const Api = (() => {
     if (_sessionToken) headers['X-Session-Token']        = _sessionToken;
     if (_initData)     headers['X-Telegram-Init-Data']  = _initData;
 
-    const res = await fetch(path, { ...opts, headers });
+    const res = await fetch(path, { ...opts, headers, signal: AbortSignal.timeout(10000) });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw Object.assign(new Error(err.error || 'API error'), { status: res.status, data: err });
