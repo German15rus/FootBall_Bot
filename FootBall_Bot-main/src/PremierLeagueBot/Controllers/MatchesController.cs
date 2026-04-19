@@ -37,12 +37,14 @@ public sealed class MatchesController(
         }
         else
         {
-            // EPL: filter by teams that appear in current standings
+            query = query.Where(m => m.CompetitionId == 1);
+
+            // Narrow to EPL teams from standings only when standings are available
             var standings  = await football.GetStandingsAsync(ct);
             var eplTeamIds = standings.Select(s => s.TeamId).ToHashSet();
-            query = query.Where(m =>
-                m.CompetitionId == 1 &&
-                (eplTeamIds.Contains(m.HomeTeamId) || eplTeamIds.Contains(m.AwayTeamId)));
+            if (eplTeamIds.Count > 0)
+                query = query.Where(m =>
+                    eplTeamIds.Contains(m.HomeTeamId) || eplTeamIds.Contains(m.AwayTeamId));
         }
 
         var matches = await query.OrderBy(m => m.MatchDate).ToListAsync(ct);
