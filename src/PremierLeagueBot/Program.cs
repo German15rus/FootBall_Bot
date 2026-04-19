@@ -29,6 +29,7 @@ try
 
     // ── Configuration binding ────────────────────────────────────────────────
     var botToken = builder.Configuration["BotToken"]
+        ?? Environment.GetEnvironmentVariable("BotToken")
         ?? throw new InvalidOperationException(
             "BotToken is not configured. Add it to appsettings.json or environment variable BotToken.");
     builder.Services.Configure<FootballApiOptions>(
