@@ -195,11 +195,21 @@ const PredictionsTab = (() => {
       btn.classList.add('saved');
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
     } catch(e) {
-      btn.textContent = e.data?.error || 'Error';
-      setTimeout(() => {
-        btn.textContent = i18n.t('pred.save');
-        btn.disabled = false;
-      }, 2000);
+      if (e.status === 422) {
+        // Match started or deadline passed — update card to closed state
+        const sir = document.getElementById(`sir-${matchId}`);
+        if (sir) sir.outerHTML = `<div class="pred-closed">🔒 ${i18n.t('pred.matchClosed')}</div>`;
+        const saveBtnEl = document.getElementById(`savebtn-${matchId}`);
+        if (saveBtnEl) saveBtnEl.remove();
+        const deadline = document.querySelector(`#pcard-${matchId} .pred-deadline`);
+        if (deadline) deadline.textContent = i18n.t('pred.matchClosed');
+      } else {
+        btn.textContent = e.data?.error || i18n.t('pred.errorGeneric');
+        setTimeout(() => {
+          btn.textContent = i18n.t('pred.save');
+          btn.disabled = false;
+        }, 2000);
+      }
       return;
     }
     btn.disabled = false;
