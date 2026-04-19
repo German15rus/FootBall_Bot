@@ -37,7 +37,10 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        var match = await db.Matches.FindAsync([req.MatchId], ct);
+        var match = await db.Matches
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .FirstOrDefaultAsync(m => m.MatchId == req.MatchId, ct);
         if (match is null)
             return NotFound(new { error = "Match not found" });
 
@@ -73,11 +76,7 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
 
         await db.SaveChangesAsync(ct);
 
-        // Reload with navigation properties
-        await db.Entry(existing).Reference(p => p.Match).LoadAsync(ct);
-        await db.Entry(existing.Match).Reference(m => m.HomeTeam).LoadAsync(ct);
-        await db.Entry(existing.Match).Reference(m => m.AwayTeam).LoadAsync(ct);
-
+        existing.Match = match;
         return Ok(MapPrediction(existing));
     }
 
