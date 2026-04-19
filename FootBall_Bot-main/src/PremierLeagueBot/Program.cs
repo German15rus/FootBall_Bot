@@ -91,9 +91,11 @@ try
     if (connectionString.Contains("Host=") || connectionString.Contains("postgresql://"))
     {
         builder.Services.AddDbContextFactory<AppDbContext>(opts =>
-            opts.UseNpgsql(connectionString));
+            opts.UseNpgsql(connectionString, b =>
+                b.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
         builder.Services.AddDbContext<AppDbContext>(opts =>
-            opts.UseNpgsql(connectionString));
+            opts.UseNpgsql(connectionString, b =>
+                b.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
     }
     else
     {
