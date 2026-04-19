@@ -21,7 +21,7 @@ public sealed class MatchesController(
         [FromQuery] string league = "epl",
         CancellationToken ct = default)
     {
-        var from = DateTime.UtcNow.Date;
+        var from = DateTime.UtcNow;
         var to   = from.AddDays(14);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
