@@ -57,8 +57,8 @@ public sealed class MatchesController(
             status        = m.Status,
             competitionId = m.CompetitionId,
             deadlineUtc   = m.MatchDate,
-            homeTeam      = new { id = m.HomeTeamId, name = m.HomeTeam.Name, emblemUrl = m.HomeTeam.EmblemUrl },
-            awayTeam      = new { id = m.AwayTeamId, name = m.AwayTeam.Name, emblemUrl = m.AwayTeam.EmblemUrl },
+            homeTeam      = new { id = m.HomeTeamId, name = m.HomeTeam?.Name ?? "?", emblemUrl = m.HomeTeam?.EmblemUrl },
+            awayTeam      = new { id = m.AwayTeamId, name = m.AwayTeam?.Name ?? "?", emblemUrl = m.AwayTeam?.EmblemUrl },
             homeScore     = m.HomeScore,
             awayScore     = m.AwayScore
         }));
