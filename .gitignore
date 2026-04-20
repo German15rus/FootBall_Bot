@@ -23,7 +23,6 @@ TestResults/
 *.sln.docstates
 
 # Sensitive local config (tokens/secrets)
-src/PremierLeagueBot/appsettings.json
 src/PremierLeagueBot/appsettings.Production.json
 
 # Logs and local databases
