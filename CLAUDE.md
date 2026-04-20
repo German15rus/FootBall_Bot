@@ -114,17 +114,45 @@ docker-compose up -d   # из FootBall_Bot/FootBall_Bot-main/
 
 ## 8. Database Schema
 
-- **User** — `TelegramId` (PK), `FavoriteTeamId` (FK → Team)
+- **User** — `TelegramId` (PK), `FavoriteTeamId` (FK → Team), `SessionToken` (для MiniApp)
 - **Team** — `TeamId`, `Name`, `ShortName`, `EmblemUrl`
-- **Match** — `MatchId`, `MatchDate`, `Status` (`scheduled`/`live`/`finished`), `PreMatchNotificationSent`, `PostMatchNotificationSent`
+- **Match** — `MatchId`, `MatchDate`, `Status` (`scheduled`/`live`/`finished`), `PreMatchNotificationSent`, `PostMatchNotificationSent`, `CompetitionId`
 - **Player** — `PlayerId`, `TeamId` (FK), `Name`, `Number`, `Position`
 - **NotificationLog** — история отправленных сообщений (TelegramId, Message, SentAt)
+- **Prediction** — предикты: `TelegramId` (FK), `MatchId` (FK), `PredictedHomeScore`, `PredictedAwayScore`, `PointsAwarded`, `IsScored`; уникальный индекс по (TelegramId, MatchId)
+- **Achievement** — справочник ачивок (`Code` PK, `NameRu`, `Icon`, …)
+- **UserAchievement** — связь пользователь↔ачивка (`TelegramId`, `AchievementCode`, `EarnedAt`)
+- **Friendship** — заявки в друзья (`RequesterId`, `AddresseeId`, `Status`, `CreatedAt`)
 
 Миграции в `Data/Migrations/`, применяются автоматически при старте через `MigrateAsync()`.
 
 ---
 
-## 9. Architecture Notes
+## 9. MiniApp / API
+
+MiniApp — это веб-интерфейс внутри Telegram, добавленный поверх основного бота.
+
+| Папка / файл                                      | Назначение                                      |
+|---------------------------------------------------|-------------------------------------------------|
+| `Controllers/`                                    | API-контроллеры (PredictionsController, etc.)   |
+| `Infrastructure/TelegramAuthFilter.cs`            | Фильтр авторизации — SessionToken или initData  |
+| `Infrastructure/TelegramInitDataValidator.cs`     | HMAC-валидация Telegram initData                |
+| `wwwroot/`                                        | Фронтенд MiniApp (HTML/JS/CSS)                  |
+| `Services/Background/PredictionScoringService.cs` | Начисление очков за предикты (каждую минуту)    |
+| `Services/Achievements/AchievementService.cs`     | Выдача ачивок, seed данных при старте           |
+
+**Авторизация API:** заголовок `X-Session-Token` (кэшируется после первого входа)
+или `X-Telegram-Init-Data` (HMAC от Telegram). Фильтр создаёт нового User в БД если не найден.
+
+**Background jobs (дополнение к разделу 7):**
+
+| Сервис                     | Интервал | Задача                              |
+|----------------------------|----------|-------------------------------------|
+| `PredictionScoringService` | 1 мин    | Начисление очков за завершённые матчи |
+
+---
+
+## 10. Architecture Notes
 
 **Long polling, не webhooks** — `BotHostedService` запускает `bot.ReceiveAsync()` в цикле
 с авто-реконнектом (задержка 5 с). Выбрано для простоты деплоя без публичного HTTPS-endpoint.
@@ -143,7 +171,7 @@ docker-compose up -d   # из FootBall_Bot/FootBall_Bot-main/
 
 ---
 
-## 10. Health & Observability
+## 11. Health & Observability
 
 - Endpoint: `GET /health` — проверяет подключение к БД (используется Docker health check)
 - Logs: `logs/bot-YYYYMMDD.log` — ежедневная ротация, хранятся 7 дней
@@ -151,7 +179,7 @@ docker-compose up -d   # из FootBall_Bot/FootBall_Bot-main/
 
 ---
 
-## 11. Deployment
+## 12. Deployment
 
 | Среда   | Способ                                                    |
 |---------|-----------------------------------------------------------|
@@ -161,7 +189,87 @@ docker-compose up -d   # из FootBall_Bot/FootBall_Bot-main/
 
 ---
 
-## 12. Design Rationale
+## 13. Правила работы с миграциями и БД (КРИТИЧНО)
+
+### Проблема: все миграции сгенерированы для SQLite
+
+Все файлы в `Data/Migrations/` созданы локально (SQLite). Они содержат SQLite-специфичные типы:
+- `type: "TEXT"` для DateTime-колонок
+- `type: "INTEGER"` для bool-колонок
+- `.Annotation("Sqlite:Autoincrement", true)` для int PK
+
+**Критичное следствие:** аннотация `Sqlite:Autoincrement` **игнорируется Npgsql** →
+в PostgreSQL колонки `Id` создаются без SERIAL/sequence → `INSERT` падает с ошибкой.
+
+### Как проблема решена
+
+В `Program.cs` есть функция `EnsurePostgresSerialSequences()`, которая запускается
+при старте **после** `MigrateAsync()`. Она создаёт недостающие SERIAL-последовательности
+для таблиц: `Predictions`, `NotificationLogs`, `UserAchievements`, `Friendships`.
+
+**НИКОГДА не удалять этот вызов из Program.cs** — иначе INSERT в эти таблицы упадёт на Supabase.
+
+### Правило: добавляешь новую таблицу с `int Id` (auto-increment)?
+
+Обязательно добавь её имя в массив внутри `EnsurePostgresSerialSequences()` в `Program.cs`.
+
+### Правило: НЕ делать сложные ALTER TABLE через EF миграции
+
+Если `MigrateAsync()` падает — приложение крашится при старте, бот перестаёт отвечать.
+
+- ✅ Можно в миграции: `CREATE TABLE`, `ADD COLUMN`, `CREATE INDEX`
+- ❌ Нельзя: `ALTER COLUMN TYPE` (падает при наличии данных), multi-statement SQL в одном `Sql()`
+- Для нестандартных исправлений: добавлять в `Program.cs` с `try-catch`, как `EnsurePostgresSerialSequences`
+
+### Правило: как генерировать новые миграции
+
+```bash
+# Генерировать всегда локально (SQLite) — типы TEXT/INTEGER это ожидаемо
+dotnet ef migrations add ИмяМиграции --project src/PremierLeagueBot
+
+# После генерации проверить Up(): есть новая таблица с int Id + Autoincrement?
+# → добавить имя таблицы в EnsurePostgresSerialSequences() в Program.cs
+```
+
+### Определение провайдера БД (Program.cs, строки ~88–106)
+
+Провайдер определяется **по содержимому строки подключения**, не по `ASPNETCORE_ENVIRONMENT`:
+- Содержит `"Host="` или `"postgresql://"` → Npgsql (PostgreSQL)
+- Иначе → SQLite
+
+В Railway **обязательно** должна быть переменная:
+```
+ConnectionStrings__Default = Host=...supabase.co;Database=postgres;Username=postgres;Password=...
+```
+
+Если переменной нет → SQLite → данные в файле контейнера → **теряются при каждом деплое**.
+
+### Как проверить какая БД используется (Railway логи)
+
+- Видно `PRAGMA journal_mode = 'wal'` → **SQLite** (переменная не установлена!)
+- Видно только `Database migrations applied` без PRAGMA → **PostgreSQL** ✅
+
+---
+
+## 14. Известные проблемы
+
+### Telegram 409 Conflict
+```
+Telegram Bot API error 409: Conflict: terminated by other getUpdates request
+```
+Railway перезапустил контейнер, старый инстанс ещё жив. Самоустраняется за ~30 с. Не критично.
+
+### TheSportsDB HTTP 429
+Ограничение частоты запросов при синхронизации составов. Обрабатывается Polly retry. Не критично.
+
+### Клавиатура бота «пропала»
+Reply-клавиатура обновляется только когда бот отправляет ответ с `replyMarkup`.
+Если бот был недоступен → клавиатура у пользователя устаревшая.
+**Решение:** написать боту `/start`.
+
+---
+
+## 15. Design Rationale
 
 ### Почему именно такая структура CLAUDE.md
 
