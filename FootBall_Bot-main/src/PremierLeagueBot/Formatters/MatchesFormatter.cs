@@ -42,6 +42,7 @@ public static class MatchesFormatter
             sb.AppendLine($"📅 {favTime:d MMM, HH:mm}");
             if (favMatch.Stadium is not null)
                 sb.AppendLine($"📍 {favMatch.Stadium}");
+            sb.AppendLine($"🔗 <a href=\"https://www.premierleague.com/match/{favMatch.MatchId}\">Страница матча</a>");
             sb.AppendLine();
             sb.AppendLine("─────────────────────────");
             sb.AppendLine();
@@ -80,6 +81,7 @@ public static class MatchesFormatter
                 sb.Append($"    ⏰ <b>{time}</b>");
                 if (m.Stadium is not null) sb.Append($"   📍 {m.Stadium}");
                 sb.AppendLine();
+                sb.AppendLine($"    🔗 <a href=\"https://www.premierleague.com/match/{m.MatchId}\">Страница матча</a>");
             }
         }
 
