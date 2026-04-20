@@ -82,6 +82,13 @@ public sealed class FootballApiClient : IFootballApiClient
         => GetCachedAsync($"news:{teamId}", TimeSpan.FromHours(1),
             c => FetchNewsAsync(teamId, c), ct);
 
+    public Task<IReadOnlyList<MatchEventDto>> GetMatchEventsAsync(
+        int matchId, CancellationToken ct = default)
+        => GetCachedAsync(
+            $"pl:events:{matchId}",
+            TimeSpan.FromSeconds(30),
+            c => FetchMatchEventsAsync(matchId, c), ct);
+
     // ── Season ID (auto-detected from PL API) ────────────────────────────────
 
     private Task<int> GetSeasonIdAsync(CancellationToken ct)
@@ -814,5 +821,134 @@ public sealed class FootballApiClient : IFootballApiClient
     {
         if (string.IsNullOrEmpty(html)) return html;
         return System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", "").Trim();
+    }
+
+    // ── Match events (official PL API: fixtures/{id}) ────────────────────────
+
+    private async Task<IReadOnlyList<MatchEventDto>> FetchMatchEventsAsync(
+        int matchId, CancellationToken ct)
+    {
+        var client = _factory.CreateClient(PlApiClient);
+        var url    = $"fixtures/{matchId}";
+
+        using var resp = await client.GetAsync(url, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("PL match events fetch failed for {MatchId}: {Status}",
+                matchId, resp.StatusCode);
+            return [];
+        }
+
+        JsonElement root;
+        try
+        {
+            root = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not parse PL events JSON for {MatchId}", matchId);
+            return [];
+        }
+
+        if (!root.TryGetProperty("events", out var events) || events.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return ParseMatchEvents(matchId, events);
+    }
+
+    private static IReadOnlyList<MatchEventDto> ParseMatchEvents(int matchId, JsonElement events)
+    {
+        var result = new List<MatchEventDto>();
+
+        foreach (var e in events.EnumerateArray())
+        {
+            var typeRaw = e.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+            var type    = MapEventType(typeRaw);
+            if (type is null) continue;
+
+            var minute    = ParseEventMinute(e);
+            var teamId    = e.TryGetProperty("teamId", out var tid) ? (int?)ParseInt(tid) : null;
+            var player    = ParseEventPlayerName(e);
+            var (hs, asc) = ParseEventScore(e);
+            var eventKey  = BuildEventKey(e, typeRaw, minute, player);
+
+            result.Add(new MatchEventDto(
+                MatchId:    matchId,
+                EventKey:   eventKey,
+                Type:       type.Value,
+                Minute:     minute,
+                PlayerName: player,
+                TeamId:     teamId,
+                HomeScore:  hs,
+                AwayScore:  asc));
+        }
+
+        return result;
+    }
+
+    private static MatchEventType? MapEventType(string raw) => raw.ToUpperInvariant() switch
+    {
+        "G" or "GOAL" or "P" or "O"  => MatchEventType.Goal,          // P = penalty, O = own-goal
+        "YC" or "YELLOWCARD"         => MatchEventType.YellowCard,
+        "RC" or "REDCARD" or "Y2C"   => MatchEventType.RedCard,       // Y2C = 2nd yellow = red
+        "HT" or "HALFTIME"           => MatchEventType.HalfTime,
+        _                             => null
+    };
+
+    private static int ParseEventMinute(JsonElement e)
+    {
+        if (e.TryGetProperty("clock", out var clock))
+        {
+            if (clock.TryGetProperty("secs", out var secs))
+            {
+                var s = ParseInt(secs);
+                if (s > 0) return s / 60;
+            }
+            if (clock.TryGetProperty("label", out var label))
+            {
+                var raw = label.GetString() ?? "";
+                var cut = raw.IndexOfAny([':', '\'', ' ']);
+                var head = cut >= 0 ? raw[..cut] : raw;
+                if (int.TryParse(head, out var m)) return m;
+            }
+        }
+        if (e.TryGetProperty("phase", out var phase) && phase.GetString() == "2")
+            return 45;
+        return 0;
+    }
+
+    private static string? ParseEventPlayerName(JsonElement e)
+    {
+        if (e.TryGetProperty("name", out var nameEl))
+        {
+            if (nameEl.ValueKind == JsonValueKind.Object)
+            {
+                if (nameEl.TryGetProperty("display", out var d)) return d.GetString();
+                if (nameEl.TryGetProperty("last", out var last)) return last.GetString();
+            }
+            if (nameEl.ValueKind == JsonValueKind.String) return nameEl.GetString();
+        }
+        if (e.TryGetProperty("description", out var desc) && desc.ValueKind == JsonValueKind.String)
+            return desc.GetString();
+        return null;
+    }
+
+    private static (int? home, int? away) ParseEventScore(JsonElement e)
+    {
+        if (!e.TryGetProperty("score", out var score) || score.ValueKind != JsonValueKind.Object)
+            return (null, null);
+        var h = ParseNullableInt(score, "homeScore");
+        var a = ParseNullableInt(score, "awayScore");
+        return (h, a);
+    }
+
+    private static string BuildEventKey(JsonElement e, string typeRaw, int minute, string? player)
+    {
+        if (e.TryGetProperty("id", out var idEl))
+        {
+            var id = ParseInt(idEl);
+            if (id > 0) return id.ToString(CultureInfo.InvariantCulture);
+        }
+        return $"{typeRaw}-{minute}-{player ?? "?"}";
     }
 }

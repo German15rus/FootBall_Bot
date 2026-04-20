@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Achievement> Achievements => Set<Achievement>();
     public DbSet<UserAchievement> UserAchievements => Set<UserAchievement>();
     public DbSet<Friendship> Friendships => Set<Friendship>();
+    public DbSet<MatchEventNotification> MatchEventNotifications => Set<MatchEventNotification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -109,6 +110,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(f => new { f.RequesterId, f.AddresseeId }).IsUnique();
             e.HasIndex(f => f.AddresseeId);
             e.HasIndex(f => f.Status);
+        });
+
+        // MatchEventNotification
+        modelBuilder.Entity<MatchEventNotification>(e =>
+        {
+            e.HasKey(x => new { x.MatchId, x.EventKey });
+            e.Property(x => x.EventKey).HasMaxLength(100);
+            e.HasIndex(x => x.MatchId);
         });
 
         // UserAchievement

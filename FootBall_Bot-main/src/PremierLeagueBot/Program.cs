@@ -122,6 +122,7 @@ try
     builder.Services.AddHostedService<BotHostedService>();
     builder.Services.AddHostedService<DataUpdateService>();
     builder.Services.AddHostedService<MatchNotificationService>();
+    builder.Services.AddHostedService<LiveMatchNotificationService>();
     builder.Services.AddHostedService<NewsNotificationService>();
     builder.Services.AddHostedService<PredictionScoringService>();
 

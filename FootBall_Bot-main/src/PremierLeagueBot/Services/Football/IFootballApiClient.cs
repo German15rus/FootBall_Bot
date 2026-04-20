@@ -21,4 +21,7 @@ public interface IFootballApiClient
 
     /// <summary>Returns latest news for the given team (or all EPL news if teamId is null).</summary>
     Task<IReadOnlyList<NewsDto>> GetNewsAsync(int? teamId = null, CancellationToken ct = default);
+
+    /// <summary>Returns in-match events (goals, cards, half-time) for the given match id.</summary>
+    Task<IReadOnlyList<MatchEventDto>> GetMatchEventsAsync(int matchId, CancellationToken ct = default);
 }

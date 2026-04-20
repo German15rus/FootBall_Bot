@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using PremierLeagueBot.Models.Api;
+using PremierLeagueBot.Services.Emoji;
 
 namespace PremierLeagueBot.Formatters;
 
@@ -114,4 +115,72 @@ public static class MatchesFormatter
 
     private static string Capitalize(string s)
         => string.IsNullOrEmpty(s) ? s : char.ToUpper(s[0]) + s[1..];
+
+    // ── Live in-match notifications ──────────────────────────────────────────
+
+    /// <summary>
+    /// Formats a goal event. Score line uses club emblems from the custom emoji pack.
+    /// </summary>
+    public static string FormatGoal(
+        MatchEventDto ev,
+        string homeTeamName,
+        string awayTeamName,
+        EmojiPackService emoji)
+    {
+        var scorer = ev.PlayerName ?? "—";
+        var hs     = ev.HomeScore?.ToString(Ru) ?? "?";
+        var as_    = ev.AwayScore?.ToString(Ru) ?? "?";
+        var homeE  = emoji.RenderEmblem(homeTeamName, "⚽");
+        var awayE  = emoji.RenderEmblem(awayTeamName, "⚽");
+
+        return $"⚽ <b>ГОЛ!</b>  {ev.Minute}' — {scorer}\n\n" +
+               $"{homeE} <b>{homeTeamName}  {hs} – {as_}  {awayTeamName}</b> {awayE}";
+    }
+
+    /// <summary>
+    /// Formats a yellow or red card. teamName is the card recipient's team.
+    /// </summary>
+    public static string FormatCard(MatchEventDto ev, string teamName)
+    {
+        var icon    = ev.Type == MatchEventType.RedCard ? "🟥" : "🟨";
+        var colour  = ev.Type == MatchEventType.RedCard ? "Красная" : "Жёлтая";
+        var player  = ev.PlayerName ?? "—";
+        return $"{icon} <b>{colour} карточка</b>, {ev.Minute}' — {player} ({teamName})";
+    }
+
+    /// <summary>
+    /// Formats a half-time summary with emblems around the score
+    /// and a list of first-half goal scorers.
+    /// </summary>
+    public static string FormatHalftime(
+        int homeScore,
+        int awayScore,
+        string homeTeamName,
+        string awayTeamName,
+        IEnumerable<MatchEventDto> firstHalfGoals,
+        EmojiPackService emoji)
+    {
+        var homeE = emoji.RenderEmblem(homeTeamName, "⚽");
+        var awayE = emoji.RenderEmblem(awayTeamName, "⚽");
+
+        var sb = new StringBuilder();
+        sb.AppendLine("⏸ <b>Конец первого тайма</b>");
+        sb.AppendLine();
+        sb.AppendLine($"{homeE} <b>{homeTeamName}  {homeScore} – {awayScore}  {awayTeamName}</b> {awayE}");
+
+        var scorers = firstHalfGoals
+            .Where(g => g.Type == MatchEventType.Goal)
+            .OrderBy(g => g.Minute)
+            .Select(g => $"{g.Minute}' {g.PlayerName ?? "—"}")
+            .ToList();
+
+        if (scorers.Count > 0)
+        {
+            sb.AppendLine();
+            sb.Append("⚽ Голы: ");
+            sb.Append(string.Join(", ", scorers));
+        }
+
+        return sb.ToString().TrimEnd();
+    }
 }

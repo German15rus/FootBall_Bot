@@ -22,6 +22,9 @@ public class Match
     /// <summary>Flag: post-match notification already sent</summary>
     public bool PostMatchNotificationSent { get; set; }
 
+    /// <summary>Flag: half-time notification already sent</summary>
+    public bool HalftimeNotificationSent { get; set; }
+
     public Team HomeTeam { get; set; } = null!;
     public Team AwayTeam { get; set; } = null!;
 }
