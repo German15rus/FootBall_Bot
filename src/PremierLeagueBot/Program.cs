@@ -28,6 +28,9 @@ try
     builder.Host.UseSerilog();
 
     // ── Configuration binding ────────────────────────────────────────────────
+    Log.Information("ENV keys: {Keys}", string.Join(", ", Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => !k.Contains("SECRET") && !k.Contains("PASSWORD") && !k.Contains("CONNECTION")).Take(30)));
+    Log.Information("BotToken from config: {Exists}", builder.Configuration["BotToken"] != null);
+    Log.Information("BotToken from env: {Exists}", Environment.GetEnvironmentVariable("BotToken") != null);
     var botToken = builder.Configuration["BotToken"]
         ?? Environment.GetEnvironmentVariable("BotToken")
         ?? throw new InvalidOperationException(
