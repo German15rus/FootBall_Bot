@@ -142,6 +142,36 @@ try
         if (db.Database.IsSqlite())
             await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 
+        // Исходные миграции были сгенерированы для SQLite — аннотация Sqlite:Autoincrement
+        // игнорируется Npgsql, поэтому колонки Id не имеют SERIAL-последовательности в PostgreSQL.
+        // Добавляем их здесь, а не через EF-миграцию, чтобы не крашить старт при ошибке.
+        if (db.Database.IsNpgsql())
+            await EnsurePostgresSerialSequences(db);
+
+        static async Task EnsurePostgresSerialSequences(AppDbContext db)
+        {
+            var tables = new[] { "Predictions", "NotificationLogs", "UserAchievements", "Friendships" };
+            foreach (var t in tables)
+            {
+                try
+                {
+                    await db.Database.ExecuteSqlRawAsync(
+                        "CREATE SEQUENCE IF NOT EXISTS \"" + t + "_Id_seq\";");
+                    await db.Database.ExecuteSqlRawAsync(
+                        "ALTER TABLE \"" + t + "\" ALTER COLUMN \"Id\" SET DEFAULT nextval('\"" + t + "_Id_seq\"');");
+                    await db.Database.ExecuteSqlRawAsync(
+                        "SELECT setval('\"" + t + "_Id_seq\"', COALESCE((SELECT MAX(\"Id\") FROM \"" + t + "\"), 0) + 1, false);");
+                    await db.Database.ExecuteSqlRawAsync(
+                        "ALTER SEQUENCE \"" + t + "_Id_seq\" OWNED BY \"" + t + "\".\"Id\";");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Could not ensure SERIAL sequence for {Table} — skipping", t);
+                }
+            }
+            Log.Information("PostgreSQL SERIAL sequences ensured");
+        }
+
         // Seed achievement definitions
         var achievements = scope.ServiceProvider.GetRequiredService<AchievementService>();
         await achievements.SeedAsync();
