@@ -37,15 +37,13 @@ public sealed class BotHostedService(
 
         // IMPORTANT: delete any existing webhook so Telegram delivers updates
         // via long polling (getUpdates) instead of pushing to a webhook URL.
-        await bot.DeleteWebhook(dropPendingUpdates: false, cancellationToken: stoppingToken);
+        await bot.DeleteWebhook(dropPendingUpdates: true, cancellationToken: stoppingToken);
         logger.LogInformation("Webhook deleted — long polling is now active");
 
         var receiverOptions = new ReceiverOptions
         {
             AllowedUpdates = [UpdateType.Message, UpdateType.CallbackQuery],
-            // Do NOT drop pending updates — /start sent while the app is
-            // starting must still be delivered once polling begins.
-            DropPendingUpdates = false,
+            DropPendingUpdates = true,
         };
 
         Func<ITelegramBotClient, Update, CancellationToken, Task> updateHandler =
