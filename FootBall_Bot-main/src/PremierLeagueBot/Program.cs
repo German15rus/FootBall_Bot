@@ -147,7 +147,40 @@ try
         // игнорируется Npgsql, поэтому колонки Id не имеют SERIAL-последовательности в PostgreSQL.
         // Добавляем их здесь, а не через EF-миграцию, чтобы не крашить старт при ошибке.
         if (db.Database.IsNpgsql())
+        {
             await EnsurePostgresSerialSequences(db);
+            await EnsurePostgresBooleanColumns(db);
+        }
+
+        // Колонки bool в миграциях сгенерированы с type: "INTEGER" (SQLite-стиль).
+        // Npgsql отказывается читать integer как bool — валит все SELECT из Matches.
+        // Конвертируем integer → boolean один раз; повторные запуски no-op.
+        static async Task EnsurePostgresBooleanColumns(AppDbContext db)
+        {
+            var columns = new[]
+            {
+                ("Matches", "PreMatchNotificationSent"),
+                ("Matches", "PostMatchNotificationSent"),
+                ("Matches", "HalftimeNotificationSent"),
+            };
+            foreach (var (table, column) in columns)
+            {
+                try
+                {
+                    await db.Database.ExecuteSqlRawAsync(
+                        $"ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" DROP DEFAULT;");
+                    await db.Database.ExecuteSqlRawAsync(
+                        $"ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" TYPE boolean USING \"{column}\"::int::boolean;");
+                    await db.Database.ExecuteSqlRawAsync(
+                        $"ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" SET DEFAULT false;");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Could not convert {Table}.{Column} to boolean — skipping", table, column);
+                }
+            }
+            Log.Information("PostgreSQL boolean columns ensured");
+        }
 
         static async Task EnsurePostgresSerialSequences(AppDbContext db)
         {
