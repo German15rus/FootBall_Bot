@@ -39,3 +39,5 @@ logs/
 Thumbs.db
 
 .fake
+//игнор ключа firebase-credentials.json, который содержит данные для доступа к Firebase
+firebase-credentials.json

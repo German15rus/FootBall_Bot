@@ -1,6 +1,4 @@
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Services.Achievements;
 
 namespace PremierLeagueBot.Services.Background;
@@ -23,15 +21,13 @@ public sealed class PredictionScoringService(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("PredictionScoringService started");
-        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken); // startup grace
+        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await ScoreAsync(stoppingToken); }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.LogError(ex, "Error in PredictionScoringService");
-            }
+                { logger.LogError(ex, "Error in PredictionScoringService"); }
             await Task.Delay(Interval, stoppingToken);
         }
     }
@@ -39,50 +35,42 @@ public sealed class PredictionScoringService(
     private async Task ScoreAsync(CancellationToken ct)
     {
         using var scope          = scopeFactory.CreateScope();
-        var db                   = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var matchRepo            = scope.ServiceProvider.GetRequiredService<MatchRepository>();
+        var predRepo             = scope.ServiceProvider.GetRequiredService<PredictionRepository>();
         var achievementService   = scope.ServiceProvider.GetRequiredService<AchievementService>();
 
-        // Find predictions for finished matches that haven't been scored yet
-        var unscored = await db.Predictions
-            .Include(p => p.Match)
-            .Where(p => !p.IsScored
-                     && p.Match.Status == "finished"
-                     && p.Match.HomeScore.HasValue
-                     && p.Match.AwayScore.HasValue)
-            .ToListAsync(ct);
-
-        if (unscored.Count == 0) return;
+        // Find all finished matches with scores
+        var finishedMatches = await matchRepo.GetFinishedWithScoresAsync(ct);
+        if (finishedMatches.Count == 0) return;
 
         var affectedUsers = new HashSet<long>();
 
-        foreach (var prediction in unscored)
+        foreach (var match in finishedMatches)
         {
-            var actualHome = prediction.Match.HomeScore!.Value;
-            var actualAway = prediction.Match.AwayScore!.Value;
+            var unscored = await predRepo.GetUnscoredByMatchAsync(match.MatchId, ct);
+            if (unscored.Count == 0) continue;
 
-            prediction.PointsAwarded = CalculatePoints(
-                prediction.PredictedHomeScore,
-                prediction.PredictedAwayScore,
-                actualHome,
-                actualAway);
+            foreach (var p in unscored)
+            {
+                p.PointsAwarded = CalculatePoints(
+                    p.PredictedHomeScore, p.PredictedAwayScore,
+                    match.HomeScore!.Value, match.AwayScore!.Value);
+                p.IsScored       = true;
+                p.MatchStatus    = match.Status;
+                p.MatchHomeScore = match.HomeScore;
+                p.MatchAwayScore = match.AwayScore;
+                affectedUsers.Add(p.TelegramId);
+            }
 
-            prediction.IsScored = true;
-            affectedUsers.Add(prediction.TelegramId);
+            await predRepo.BatchUpdateAsync(unscored, ct);
+            logger.LogInformation("Scored {Count} predictions for match {MatchId}", unscored.Count, match.MatchId);
         }
 
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Scored {Count} predictions", unscored.Count);
-
-        // Check achievements for each affected user
         foreach (var userId in affectedUsers)
-        {
             await achievementService.CheckAndGrantAsync(userId, ct);
-        }
     }
 
-    private static int CalculatePoints(
-        int predHome, int predAway,
-        int actualHome, int actualAway)
+    private static int CalculatePoints(int predHome, int predAway, int actualHome, int actualAway)
     {
         bool exactScore     = predHome == actualHome && predAway == actualAway;
         bool correctOutcome = Outcome(predHome, predAway) == Outcome(actualHome, actualAway);

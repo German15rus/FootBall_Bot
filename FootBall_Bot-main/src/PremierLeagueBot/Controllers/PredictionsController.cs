@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Infrastructure;
 using Serilog;
 
@@ -10,26 +9,20 @@ namespace PremierLeagueBot.Controllers;
 [ApiController]
 [Route("api/predictions")]
 [ServiceFilter(typeof(TelegramAuthFilter))]
-public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFactory) : ControllerBase
+public sealed class PredictionsController(
+    PredictionRepository predRepo,
+    MatchRepository matchRepo,
+    TeamRepository teamRepo) : ControllerBase
 {
-    private User CurrentUser => (User)HttpContext.Items[TelegramAuthFilter.CurrentUserKey]!;
+    private UserDoc CurrentUser => (UserDoc)HttpContext.Items[TelegramAuthFilter.CurrentUserKey]!;
 
-    /// <summary>Returns all predictions for the current user (scored + unscored).</summary>
     [HttpGet]
     public async Task<IActionResult> GetMy(CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var predictions = await db.Predictions
-            .Include(p => p.Match).ThenInclude(m => m.HomeTeam)
-            .Include(p => p.Match).ThenInclude(m => m.AwayTeam)
-            .Where(p => p.TelegramId == CurrentUser.TelegramId)
-            .OrderByDescending(p => p.Match.MatchDate)
-            .ToListAsync(ct);
-
+        var predictions = await predRepo.GetByUserAsync(CurrentUser.TelegramId, ct);
         return Ok(predictions.Select(MapPrediction));
     }
 
-    /// <summary>Creates or updates a prediction. Rejected if past the deadline.</summary>
     [HttpPost]
     public async Task<IActionResult> Upsert([FromBody] SavePredictionRequest req, CancellationToken ct)
     {
@@ -38,37 +31,44 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
 
         try
         {
-            await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-            var match = await db.Matches
-                .Include(m => m.HomeTeam)
-                .Include(m => m.AwayTeam)
-                .FirstOrDefaultAsync(m => m.MatchId == req.MatchId, ct);
+            var match = await matchRepo.GetByIdAsync(req.MatchId, ct);
             if (match is null)
                 return NotFound(new { error = "Match not found" });
 
             if (match.Status != "scheduled")
                 return UnprocessableEntity(new { error = "Match has already started or finished" });
 
-            var deadline = match.MatchDate;
-            if (DateTime.UtcNow >= deadline)
-                return UnprocessableEntity(new { error = "Prediction deadline has passed", deadline });
+            if (DateTime.UtcNow >= match.MatchDate)
+                return UnprocessableEntity(new { error = "Prediction deadline has passed", deadline = match.MatchDate });
 
-            var existing = await db.Predictions
-                .FirstOrDefaultAsync(p => p.TelegramId == CurrentUser.TelegramId && p.MatchId == req.MatchId, ct);
+            // Load team names for denormalization (only on create/update)
+            var teams = await teamRepo.GetManyAsync(new[] { match.HomeTeamId, match.AwayTeamId }, ct);
+            teams.TryGetValue(match.HomeTeamId, out var homeTeam);
+            teams.TryGetValue(match.AwayTeamId, out var awayTeam);
+
+            var existing = await predRepo.GetAsync(CurrentUser.TelegramId, req.MatchId, ct);
 
             if (existing is null)
             {
-                existing = new Prediction
+                existing = new PredictionDoc
                 {
-                    TelegramId           = CurrentUser.TelegramId,
-                    MatchId              = req.MatchId,
-                    PredictedHomeScore   = req.HomeScore,
-                    PredictedAwayScore   = req.AwayScore,
-                    CreatedAt            = DateTime.UtcNow,
-                    UpdatedAt            = DateTime.UtcNow
+                    TelegramId          = CurrentUser.TelegramId,
+                    MatchId             = req.MatchId,
+                    PredictedHomeScore  = req.HomeScore,
+                    PredictedAwayScore  = req.AwayScore,
+                    CreatedAt           = DateTime.UtcNow,
+                    UpdatedAt           = DateTime.UtcNow,
+                    MatchDate           = match.MatchDate,
+                    MatchStatus         = match.Status,
+                    MatchHomeScore      = match.HomeScore,
+                    MatchAwayScore      = match.AwayScore,
+                    HomeTeamId          = match.HomeTeamId,
+                    AwayTeamId          = match.AwayTeamId,
+                    HomeTeamName        = homeTeam?.Name ?? "?",
+                    AwayTeamName        = awayTeam?.Name ?? "?",
+                    HomeTeamEmblem      = homeTeam?.EmblemUrl,
+                    AwayTeamEmblem      = awayTeam?.EmblemUrl
                 };
-                db.Predictions.Add(existing);
             }
             else
             {
@@ -77,9 +77,7 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
                 existing.UpdatedAt          = DateTime.UtcNow;
             }
 
-            await db.SaveChangesAsync(ct);
-
-            existing.Match = match;
+            await predRepo.UpsertAsync(existing, ct);
             return Ok(MapPrediction(existing));
         }
         catch (Exception ex)
@@ -89,22 +87,22 @@ public sealed class PredictionsController(IDbContextFactory<AppDbContext> dbFact
         }
     }
 
-    private static object MapPrediction(Prediction p) => new
+    private static object MapPrediction(PredictionDoc p) => new
     {
-        id             = p.Id,
-        matchId        = p.MatchId,
-        matchDate      = p.Match.MatchDate,
-        deadlineUtc    = p.Match.MatchDate,
-        homeTeam       = new { id = p.Match.HomeTeamId, name = p.Match.HomeTeam?.Name ?? "?", emblemUrl = p.Match.HomeTeam?.EmblemUrl },
-        awayTeam       = new { id = p.Match.AwayTeamId, name = p.Match.AwayTeam?.Name ?? "?", emblemUrl = p.Match.AwayTeam?.EmblemUrl },
-        predictedHome  = p.PredictedHomeScore,
-        predictedAway  = p.PredictedAwayScore,
-        actualHome     = p.Match.HomeScore,
-        actualAway     = p.Match.AwayScore,
-        matchStatus    = p.Match.Status,
-        pointsAwarded  = p.PointsAwarded,
-        isScored       = p.IsScored,
-        updatedAt      = p.UpdatedAt
+        id            = p.DocId,
+        matchId       = p.MatchId,
+        matchDate     = p.MatchDate,
+        deadlineUtc   = p.MatchDate,
+        homeTeam      = new { id = p.HomeTeamId, name = p.HomeTeamName, emblemUrl = p.HomeTeamEmblem },
+        awayTeam      = new { id = p.AwayTeamId, name = p.AwayTeamName, emblemUrl = p.AwayTeamEmblem },
+        predictedHome = p.PredictedHomeScore,
+        predictedAway = p.PredictedAwayScore,
+        actualHome    = p.MatchHomeScore,
+        actualAway    = p.MatchAwayScore,
+        matchStatus   = p.MatchStatus,
+        pointsAwarded = p.PointsAwarded,
+        isScored      = p.IsScored,
+        updatedAt     = p.UpdatedAt
     };
 }
 

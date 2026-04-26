@@ -1,17 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 
 namespace PremierLeagueBot.Infrastructure;
 
-/// <summary>
-/// Action filter that validates the Telegram initData header and sets CurrentUser in HttpContext.Items.
-/// Apply [ServiceFilter(typeof(TelegramAuthFilter))] on controllers or actions that require auth.
-/// </summary>
 public sealed class TelegramAuthFilter(
-    IDbContextFactory<AppDbContext> dbFactory,
+    UserRepository userRepo,
     IConfiguration configuration,
     ILogger<TelegramAuthFilter> logger) : IAsyncActionFilter
 {
@@ -19,13 +14,11 @@ public sealed class TelegramAuthFilter(
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
-        await using var db = await dbFactory.CreateDbContextAsync();
-
         // ── Option 1: session token (cached after first login) ───────────────
         var sessionToken = context.HttpContext.Request.Headers["X-Session-Token"].FirstOrDefault();
         if (!string.IsNullOrEmpty(sessionToken))
         {
-            var userByToken = await db.Users.FirstOrDefaultAsync(u => u.SessionToken == sessionToken);
+            var userByToken = await userRepo.GetBySessionTokenAsync(sessionToken);
             if (userByToken is not null)
             {
                 context.HttpContext.Items[CurrentUserKey] = userByToken;
@@ -44,8 +37,7 @@ public sealed class TelegramAuthFilter(
         }
 
         var botToken = (configuration["BotToken"] ?? "").Trim();
-
-        var isDev = context.HttpContext.RequestServices
+        var isDev    = context.HttpContext.RequestServices
             .GetRequiredService<IHostEnvironment>().IsDevelopment();
 
         if (!TelegramInitDataValidator.TryValidate(initData, botToken, out var parsed) && !isDev)
@@ -60,11 +52,11 @@ public sealed class TelegramAuthFilter(
             return;
         }
 
-        var user = await db.Users.FindAsync(parsed.TelegramId);
+        var user = await userRepo.GetByIdAsync(parsed.TelegramId);
 
         if (user is null)
         {
-            user = new User
+            user = new UserDoc
             {
                 TelegramId   = parsed.TelegramId,
                 FirstName    = parsed.FirstName,
@@ -72,17 +64,21 @@ public sealed class TelegramAuthFilter(
                 LanguageCode = parsed.LanguageCode,
                 RegisteredAt = DateTime.UtcNow
             };
-            db.Users.Add(user);
-            await db.SaveChangesAsync();
+            await userRepo.UpsertAsync(user);
             logger.LogInformation("MiniApp: new user {Id} ({Name})", user.TelegramId, user.FirstName);
         }
         else
         {
-            var changed = false;
-            if (user.FirstName != parsed.FirstName)       { user.FirstName    = parsed.FirstName;    changed = true; }
-            if (user.Username  != parsed.Username)         { user.Username     = parsed.Username;     changed = true; }
-            if (user.LanguageCode != parsed.LanguageCode) { user.LanguageCode = parsed.LanguageCode; changed = true; }
-            if (changed) await db.SaveChangesAsync();
+            var changed = user.FirstName    != parsed.FirstName    ||
+                          user.Username     != parsed.Username     ||
+                          user.LanguageCode != parsed.LanguageCode;
+            if (changed)
+            {
+                user.FirstName    = parsed.FirstName;
+                user.Username     = parsed.Username;
+                user.LanguageCode = parsed.LanguageCode;
+                await userRepo.UpsertAsync(user);
+            }
         }
 
         context.HttpContext.Items[CurrentUserKey] = user;

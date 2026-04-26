@@ -1,16 +1,12 @@
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using Telegram.Bot;
 
 namespace PremierLeagueBot.Services.Notification;
 
-/// <summary>
-/// Handles sending notifications to users and persisting notification logs.
-/// </summary>
 public sealed class NotificationService(
     ITelegramBotClient bot,
-    IDbContextFactory<AppDbContext> dbFactory,
+    IServiceScopeFactory scopeFactory,
     ILogger<NotificationService> logger)
 {
     public async Task SendToUserAsync(long telegramId, string html, CancellationToken ct = default)
@@ -36,19 +32,19 @@ public sealed class NotificationService(
         foreach (var id in telegramIds)
         {
             await SendToUserAsync(id, html, ct);
-            await Task.Delay(50, ct); // Respect Telegram rate-limit (30 msg/s)
+            await Task.Delay(50, ct);
         }
     }
 
     private async Task LogAsync(long telegramId, string message, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        db.NotificationLogs.Add(new NotificationLog
+        using var scope = scopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<NotificationLogRepository>();
+        await repo.AddAsync(new NotificationLogDoc
         {
             TelegramId = telegramId,
             Message    = message.Length > 500 ? message[..500] : message,
             SentAt     = DateTime.UtcNow
-        });
-        await db.SaveChangesAsync(ct);
+        }, ct);
     }
 }

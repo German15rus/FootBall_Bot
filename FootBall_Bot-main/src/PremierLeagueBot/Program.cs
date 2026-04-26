@@ -1,6 +1,7 @@
-using Microsoft.EntityFrameworkCore;
+using Google.Cloud.Firestore;
 using Microsoft.Extensions.Options;
-using PremierLeagueBot.Data;
+using PremierLeagueBot.Data.Repositories;
+using PremierLeagueBot.Tools;
 using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Achievements;
 using PremierLeagueBot.Services.Background;
@@ -21,6 +22,22 @@ Log.Logger = new LoggerConfiguration()
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 7)
     .CreateLogger();
+
+// ── One-time data migration mode ─────────────────────────────────────────────
+if (args.Contains("--migrate"))
+{
+    var credPath = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")
+        ?? "firebase-credentials.json";
+    if (File.Exists(credPath))
+        Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Path.GetFullPath(credPath));
+
+    var config   = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+    var projectId = config["Firestore:ProjectId"] ?? throw new InvalidOperationException("Firestore:ProjectId missing");
+    var db        = FirestoreDb.Create(projectId);
+
+    await MigrateSqliteToFirestore.RunAsync("premier_league_bot.db", db);
+    return;
+}
 
 try
 {
@@ -80,30 +97,35 @@ try
                   .AllowAnyMethod();
         });
     });
-    // узнать для чего
+
     // ── Memory cache ─────────────────────────────────────────────────────────
     builder.Services.AddMemoryCache();
 
-    // ── Database (SQLite dev / PostgreSQL prod) ───────────────────────────────
-    var connectionString = builder.Configuration.GetConnectionString("Default")
-        ?? "Data Source=premier_league_bot.db";
+    // ── Firestore ─────────────────────────────────────────────────────────────
+    {
+        var credPath = builder.Configuration["Firestore:CredentialsPath"];
+        if (!string.IsNullOrEmpty(credPath) && File.Exists(credPath))
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS",
+                Path.GetFullPath(credPath));
 
-    if (connectionString.Contains("Host=") || connectionString.Contains("postgresql://"))
-    {
-        builder.Services.AddDbContextFactory<AppDbContext>(opts =>
-            opts.UseNpgsql(connectionString, b =>
-                b.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
-        builder.Services.AddDbContext<AppDbContext>(opts =>
-            opts.UseNpgsql(connectionString, b =>
-                b.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
+        var projectId = builder.Configuration["Firestore:ProjectId"]
+            ?? throw new InvalidOperationException(
+                "Firestore:ProjectId is not configured. Set it in appsettings.json.");
+
+        var firestoreDb = FirestoreDb.Create(projectId);
+        builder.Services.AddSingleton(firestoreDb);
     }
-    else
-    {
-        builder.Services.AddDbContextFactory<AppDbContext>(opts =>
-            opts.UseSqlite(connectionString));
-        builder.Services.AddDbContext<AppDbContext>(opts =>
-            opts.UseSqlite(connectionString));
-    }
+
+    // ── Repositories ──────────────────────────────────────────────────────────
+    builder.Services.AddScoped<UserRepository>();
+    builder.Services.AddScoped<TeamRepository>();
+    builder.Services.AddScoped<MatchRepository>();
+    builder.Services.AddScoped<PlayerRepository>();
+    builder.Services.AddScoped<PredictionRepository>();
+    builder.Services.AddScoped<AchievementRepository>();
+    builder.Services.AddScoped<FriendshipRepository>();
+    builder.Services.AddScoped<MatchEventRepository>();
+    builder.Services.AddScoped<NotificationLogRepository>();
 
     // ── Application services ──────────────────────────────────────────────────
     builder.Services.AddSingleton<NotificationService>();
@@ -127,86 +149,13 @@ try
     builder.Services.AddHostedService<PredictionScoringService>();
 
     // ── Health-check endpoint (useful for containers) ─────────────────────────
-    builder.Services.AddHealthChecks()
-        .AddDbContextCheck<AppDbContext>();
+    builder.Services.AddHealthChecks();
 
     var app = builder.Build();
 
-    // ── Apply migrations on startup ───────────────────────────────────────────
+    // ── Seed achievement definitions on startup ───────────────────────────────
     using (var scope = app.Services.CreateScope())
     {
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await db.Database.MigrateAsync();
-        Log.Information("Database migrations applied");
-
-        // WAL mode — только для SQLite (PostgreSQL не поддерживает PRAGMA)
-        if (db.Database.IsSqlite())
-            await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
-
-        // Исходные миграции были сгенерированы для SQLite — аннотация Sqlite:Autoincrement
-        // игнорируется Npgsql, поэтому колонки Id не имеют SERIAL-последовательности в PostgreSQL.
-        // Добавляем их здесь, а не через EF-миграцию, чтобы не крашить старт при ошибке.
-        if (db.Database.IsNpgsql())
-        {
-            await EnsurePostgresSerialSequences(db);
-            await EnsurePostgresBooleanColumns(db);
-        }
-
-        // Колонки bool в миграциях сгенерированы с type: "INTEGER" (SQLite-стиль).
-        // Npgsql отказывается читать integer как bool — валит все SELECT из Matches.
-        // Конвертируем integer → boolean один раз; повторные запуски no-op.
-        static async Task EnsurePostgresBooleanColumns(AppDbContext db)
-        {
-            var columns = new[]
-            {
-                ("Matches", "PreMatchNotificationSent"),
-                ("Matches", "PostMatchNotificationSent"),
-                ("Matches", "HalftimeNotificationSent"),
-            };
-            foreach (var (table, column) in columns)
-            {
-                try
-                {
-                    await db.Database.ExecuteSqlRawAsync(
-                        $"ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" DROP DEFAULT;");
-                    await db.Database.ExecuteSqlRawAsync(
-                        $"ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" TYPE boolean USING \"{column}\"::int::boolean;");
-                    await db.Database.ExecuteSqlRawAsync(
-                        $"ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" SET DEFAULT false;");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "Could not convert {Table}.{Column} to boolean — skipping", table, column);
-                }
-            }
-            Log.Information("PostgreSQL boolean columns ensured");
-        }
-
-        static async Task EnsurePostgresSerialSequences(AppDbContext db)
-        {
-            var tables = new[] { "Predictions", "NotificationLogs", "UserAchievements", "Friendships" };
-            foreach (var t in tables)
-            {
-                try
-                {
-                    await db.Database.ExecuteSqlRawAsync(
-                        "CREATE SEQUENCE IF NOT EXISTS \"" + t + "_Id_seq\";");
-                    await db.Database.ExecuteSqlRawAsync(
-                        "ALTER TABLE \"" + t + "\" ALTER COLUMN \"Id\" SET DEFAULT nextval('\"" + t + "_Id_seq\"');");
-                    await db.Database.ExecuteSqlRawAsync(
-                        "SELECT setval('\"" + t + "_Id_seq\"', COALESCE((SELECT MAX(\"Id\") FROM \"" + t + "\"), 0) + 1, false);");
-                    await db.Database.ExecuteSqlRawAsync(
-                        "ALTER SEQUENCE \"" + t + "_Id_seq\" OWNED BY \"" + t + "\".\"Id\";");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "Could not ensure SERIAL sequence for {Table} — skipping", t);
-                }
-            }
-            Log.Information("PostgreSQL SERIAL sequences ensured");
-        }
-
-        // Seed achievement definitions
         var achievements = scope.ServiceProvider.GetRequiredService<AchievementService>();
         await achievements.SeedAsync();
         Log.Information("Achievement definitions seeded");
@@ -215,10 +164,8 @@ try
     app.MapHealthChecks("/health");
 
     // ── Static files + CORS for Telegram Mini App ─────────────────────────────
-    // wwwroot/ will contain the Mini App frontend (HTML/JS/CSS).
-    app.UseDefaultFiles();   // serves index.html for "/"
+    app.UseDefaultFiles();
 
-    // index.html must never be cached so deployments take effect immediately
     app.UseStaticFiles(new StaticFileOptions
     {
         OnPrepareResponse = ctx =>
@@ -238,9 +185,8 @@ try
 
     // ── Load custom emoji pack (non-blocking; falls back to standard emoji) ───
     var emojiService = app.Services.GetRequiredService<EmojiPackService>();
-    _ = emojiService.InitialiseAsync(); // fire-and-forget; bot starts without waiting
+    _ = emojiService.InitialiseAsync();
 
-    // Long Polling: no webhook needed – BotHostedService calls bot.ReceiveAsync()
     await app.RunAsync();
 }
 catch (Exception ex)
