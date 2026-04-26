@@ -1,5 +1,5 @@
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Formatters;
 using PremierLeagueBot.Models.Api;
 using PremierLeagueBot.Models.Bot;
@@ -15,13 +15,11 @@ namespace PremierLeagueBot.Services.Bot;
 public sealed class UpdateHandler(
     ITelegramBotClient bot,
     IFootballApiClient football,
-    IDbContextFactory<AppDbContext> dbFactory,
+    IServiceScopeFactory scopeFactory,
     EmojiPackService emojiService,
     IConfiguration configuration,
     ILogger<UpdateHandler> logger)
 {
-    // ── Entry point ──────────────────────────────────────────────────────────
-
     public async Task HandleAsync(Update update, CancellationToken ct)
     {
         try
@@ -39,8 +37,6 @@ public sealed class UpdateHandler(
         }
     }
 
-    // ── Message router ───────────────────────────────────────────────────────
-
     private async Task HandleMessageAsync(Message msg, CancellationToken ct)
     {
         if (msg.From is null || msg.Text is null) return;
@@ -49,12 +45,12 @@ public sealed class UpdateHandler(
 
         var text = msg.Text.Trim();
 
-        if (text.StartsWith("/start"))                     { await HandleStartAsync(msg, ct);     return; }
-        if (text is "/table"   or "📊 Таблица")           { await HandleTableAsync(msg, ct);     return; }
-        if (text is "/matches" or "📅 Матчи")             { await HandleMatchesAsync(msg, ct);   return; }
-        if (text is "/team"    or "🏟 Команда")           { await HandleTeamListAsync(msg, ct);  return; }
-        if (text is "/myteam"  or "⭐ Моя команда")       { await HandleMyTeamMenuAsync(msg, ct);return; }
-        if (text is "/predict" or "🔮 Предикты")          { await HandlePredictAsync(msg, ct);   return; }
+        if (text.StartsWith("/start"))                    { await HandleStartAsync(msg, ct);      return; }
+        if (text is "/table"   or "📊 Таблица")          { await HandleTableAsync(msg, ct);      return; }
+        if (text is "/matches" or "📅 Матчи")            { await HandleMatchesAsync(msg, ct);    return; }
+        if (text is "/team"    or "🏟 Команда")          { await HandleTeamListAsync(msg, ct);   return; }
+        if (text is "/myteam"  or "⭐ Моя команда")      { await HandleMyTeamMenuAsync(msg, ct); return; }
+        if (text is "/predict" or "🔮 Предикты")         { await HandlePredictAsync(msg, ct);    return; }
 
         if (text.StartsWith("/team "))
         {
@@ -62,19 +58,15 @@ public sealed class UpdateHandler(
             return;
         }
 
-        await bot.SendMessage(msg.Chat.Id,
-            "Воспользуйся меню или напиши /start 👇",
-            cancellationToken: ct);
+        await bot.SendMessage(msg.Chat.Id, "Воспользуйся меню или напиши /start 👇", cancellationToken: ct);
     }
-
-    // ── /start — красочное приветствие ───────────────────────────────────────
 
     private async Task HandleStartAsync(Message msg, CancellationToken ct)
     {
         var keyboard = new ReplyKeyboardMarkup(
         [
-            [new KeyboardButton("📊 Таблица"),   new KeyboardButton("📅 Матчи")],
-            [new KeyboardButton("🏟 Команда"),   new KeyboardButton("⭐ Моя команда")],
+            [new KeyboardButton("📊 Таблица"),  new KeyboardButton("📅 Матчи")],
+            [new KeyboardButton("🏟 Команда"),  new KeyboardButton("⭐ Моя команда")],
             [new KeyboardButton("🔮 Предикты")],
         ])
         {
@@ -111,22 +103,17 @@ public sealed class UpdateHandler(
             cancellationToken: ct);
     }
 
-    // ── Предикты (inline-кнопка для открытия Mini App с initData) ────────────
-
     private async Task HandlePredictAsync(Message msg, CancellationToken ct)
     {
         var miniAppUrl = configuration["MiniAppUrl"] ?? "";
         if (string.IsNullOrEmpty(miniAppUrl))
         {
-            await bot.SendMessage(msg.Chat.Id,
-                "⚙️ Mini App пока не настроен.",
-                cancellationToken: ct);
+            await bot.SendMessage(msg.Chat.Id, "⚙️ Mini App пока не настроен.", cancellationToken: ct);
             return;
         }
 
         var inlineKeyboard = new InlineKeyboardMarkup(
-            InlineKeyboardButton.WithWebApp("🔮 Открыть предикты", new WebAppInfo { Url = miniAppUrl })
-        );
+            InlineKeyboardButton.WithWebApp("🔮 Открыть предикты", new WebAppInfo { Url = miniAppUrl }));
 
         await bot.SendMessage(
             msg.Chat.Id,
@@ -135,8 +122,6 @@ public sealed class UpdateHandler(
             replyMarkup: inlineKeyboard,
             cancellationToken: ct);
     }
-
-    // ── Таблица ──────────────────────────────────────────────────────────────
 
     private async Task HandleTableAsync(Message msg, CancellationToken ct)
     {
@@ -148,30 +133,26 @@ public sealed class UpdateHandler(
             cancellationToken: ct);
     }
 
-    // ── Матчи ────────────────────────────────────────────────────────────────
-
     private async Task HandleMatchesAsync(Message msg, CancellationToken ct)
     {
         await bot.SendChatAction(msg.Chat.Id, ChatAction.Typing, cancellationToken: ct);
 
-        // Get user's favorite team to highlight their match first
         int? favoriteTeamId = null;
         if (msg.From is not null)
         {
-            await using var db = await dbFactory.CreateDbContextAsync(ct);
-            favoriteTeamId = (await db.Users.FindAsync([msg.From.Id], ct))?.FavoriteTeamId;
+            using var scope = scopeFactory.CreateScope();
+            var userRepo    = scope.ServiceProvider.GetRequiredService<UserRepository>();
+            favoriteTeamId  = (await userRepo.GetByIdAsync(msg.From.Id, ct))?.FavoriteTeamId;
         }
 
         var from       = DateTime.UtcNow.Date;
         var allMatches = await football.GetMatchesAsync(from, from.AddDays(7), ct);
 
-        // Keep only EPL First Team matches (teams that appear in the current standings)
         var standings  = await football.GetStandingsAsync(ct);
         var eplTeamIds = standings.Select(s => s.TeamId).ToHashSet();
 
         var matches = eplTeamIds.Count > 0
-            ? allMatches.Where(m => eplTeamIds.Contains(m.HomeTeamId)
-                                 || eplTeamIds.Contains(m.AwayTeamId)).ToList()
+            ? allMatches.Where(m => eplTeamIds.Contains(m.HomeTeamId) || eplTeamIds.Contains(m.AwayTeamId)).ToList()
             : (IReadOnlyList<MatchDto>)allMatches;
 
         await bot.SendMessage(msg.Chat.Id,
@@ -179,8 +160,6 @@ public sealed class UpdateHandler(
             parseMode: ParseMode.Html,
             cancellationToken: ct);
     }
-
-    // ── Команда: список команд ───────────────────────────────────────────────
 
     private async Task HandleTeamListAsync(Message msg, CancellationToken ct)
     {
@@ -202,20 +181,16 @@ public sealed class UpdateHandler(
                 InlineKeyboardButton.WithCallbackData(t.Name, CallbackData.TeamInfo(t.Id))))
             .ToArray();
 
-        await bot.SendMessage(msg.Chat.Id,
-            "🏟 <b>Выбери команду:</b>",
+        await bot.SendMessage(msg.Chat.Id, "🏟 <b>Выбери команду:</b>",
             parseMode:   ParseMode.Html,
             replyMarkup: new InlineKeyboardMarkup(buttons),
             cancellationToken: ct);
     }
 
-    // ── Команда: по имени через /team Arsenal ────────────────────────────────
-
     private async Task HandleTeamByNameAsync(Message msg, string teamName, CancellationToken ct)
     {
         var teams = await GetTeamsAsync(ct);
-        var found = teams.FirstOrDefault(t =>
-            t.Name.Contains(teamName, StringComparison.OrdinalIgnoreCase));
+        var found = teams.FirstOrDefault(t => t.Name.Contains(teamName, StringComparison.OrdinalIgnoreCase));
 
         if (found == default)
         {
@@ -228,19 +203,21 @@ public sealed class UpdateHandler(
         await SendTeamInfoAsync(msg.Chat.Id, found.Id, found.Name, ct);
     }
 
-    // ── Моя команда ──────────────────────────────────────────────────────────
-
     private async Task HandleMyTeamMenuAsync(Message msg, CancellationToken ct)
     {
         await bot.SendChatAction(msg.Chat.Id, ChatAction.Typing, cancellationToken: ct);
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        var user = await db.Users
-            .Include(u => u.FavoriteTeam)
-            .FirstOrDefaultAsync(u => u.TelegramId == msg.From!.Id, ct);
+        using var scope  = scopeFactory.CreateScope();
+        var userRepo     = scope.ServiceProvider.GetRequiredService<UserRepository>();
+        var teamRepo     = scope.ServiceProvider.GetRequiredService<TeamRepository>();
 
-        var header = user?.FavoriteTeam is not null
-            ? $"⭐ Сейчас следишь за: <b>{user.FavoriteTeam.Name}</b>\n\nВыбери другую команду или отпишись:"
+        var user        = await userRepo.GetByIdAsync(msg.From!.Id, ct);
+        TeamDoc? favTeam = null;
+        if (user?.FavoriteTeamId.HasValue == true)
+            favTeam = await teamRepo.GetByIdAsync(user.FavoriteTeamId.Value, ct);
+
+        var header = favTeam is not null
+            ? $"⭐ Сейчас следишь за: <b>{favTeam.Name}</b>\n\nВыбери другую команду или отпишись:"
             : "⭐ <b>Выбери любимую команду</b>\n\nБудешь получать уведомления о её матчах и новостях:";
 
         var teams = await GetTeamsAsync(ct);
@@ -267,8 +244,6 @@ public sealed class UpdateHandler(
             replyMarkup: new InlineKeyboardMarkup(buttons),
             cancellationToken: ct);
     }
-
-    // ── Callback ─────────────────────────────────────────────────────────────
 
     private async Task HandleCallbackAsync(CallbackQuery query, CancellationToken ct)
     {
@@ -300,8 +275,6 @@ public sealed class UpdateHandler(
         catch { /* already answered or timed out */ }
     }
 
-    // ── Информация о команде (состав + последние матчи) ──────────────────────
-
     private async Task SendTeamInfoAsync(long chatId, int teamId, string teamName, CancellationToken ct)
     {
         await bot.SendChatAction(chatId, ChatAction.Typing, cancellationToken: ct);
@@ -310,51 +283,39 @@ public sealed class UpdateHandler(
         var recentTask = football.GetRecentMatchesAsync(teamId, 5, ct);
         await Task.WhenAll(squadTask, recentTask);
 
-        var squadText  = TeamInfoFormatter.FormatSquad(teamName, squadTask.Result);
-        var recentText = TeamInfoFormatter.FormatRecentMatches(teamName, teamId, recentTask.Result);
-
-        await bot.SendMessage(chatId, squadText,
+        await bot.SendMessage(chatId, TeamInfoFormatter.FormatSquad(teamName, squadTask.Result),
             parseMode: ParseMode.Html, cancellationToken: ct);
-
-        await bot.SendMessage(chatId, recentText,
+        await bot.SendMessage(chatId, TeamInfoFormatter.FormatRecentMatches(teamName, teamId, recentTask.Result),
             parseMode: ParseMode.Html, cancellationToken: ct);
     }
 
-    // ── Установить любимую команду ───────────────────────────────────────────
-
     private async Task SetFavoriteTeamAsync(CallbackQuery query, int teamId, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        using var scope = scopeFactory.CreateScope();
+        var userRepo    = scope.ServiceProvider.GetRequiredService<UserRepository>();
+        var teamRepo    = scope.ServiceProvider.GetRequiredService<TeamRepository>();
 
-        // Ensure user exists (callback may come before any message handler)
         await EnsureUserAsync(query.From, ct);
 
-        var user = await db.Users.FindAsync([query.From.Id], ct);
+        var user = await userRepo.GetByIdAsync(query.From.Id, ct);
         if (user is null) return;
 
-        // Upsert team if not yet in DB (happens when clicked before DataUpdateService finishes)
-        if (!await db.Teams.AnyAsync(t => t.TeamId == teamId, ct))
+        // Upsert team if not yet in Firestore
+        var team = await teamRepo.GetByIdAsync(teamId, ct);
+        if (team is null)
         {
             var standings = await football.GetStandingsAsync(ct);
             var dto       = standings.FirstOrDefault(s => s.TeamId == teamId);
             if (dto is not null)
             {
-                db.Teams.Add(new Data.Entities.Team
-                {
-                    TeamId    = dto.TeamId,
-                    Name      = dto.TeamName,
-                    ShortName = dto.ShortName,
-                    EmblemUrl = dto.EmblemUrl
-                });
-                await db.SaveChangesAsync(ct);
+                team = new TeamDoc { TeamId = dto.TeamId, Name = dto.TeamName, ShortName = dto.ShortName, EmblemUrl = dto.EmblemUrl };
+                await teamRepo.UpsertAsync(team, ct);
             }
         }
 
-        var teamName = (await db.Teams.FindAsync([teamId], ct))?.Name
-                    ?? await ResolveTeamNameAsync(teamId, ct);
-
+        var teamName = team?.Name ?? await ResolveTeamNameAsync(teamId, ct);
         user.FavoriteTeamId = teamId;
-        await db.SaveChangesAsync(ct);
+        await userRepo.UpsertAsync(user, ct);
 
         await bot.SendMessage(query.Message!.Chat.Id,
             $"🎉 Готово! Теперь ты следишь за <b>{teamName}</b>!\n\n" +
@@ -366,43 +327,34 @@ public sealed class UpdateHandler(
             cancellationToken: ct);
     }
 
-    // ── Удалить любимую команду ──────────────────────────────────────────────
-
     private async Task RemoveFavoriteTeamAsync(CallbackQuery query, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var user = await db.Users.FindAsync([query.From.Id], ct);
+        using var scope = scopeFactory.CreateScope();
+        var userRepo    = scope.ServiceProvider.GetRequiredService<UserRepository>();
+
+        var user = await userRepo.GetByIdAsync(query.From.Id, ct);
         if (user is null) return;
 
         user.FavoriteTeamId = null;
-        await db.SaveChangesAsync(ct);
+        await userRepo.UpsertAsync(user, ct);
 
         await bot.SendMessage(query.Message!.Chat.Id,
             "✅ Ты отписан от уведомлений. Можешь выбрать другую команду в любое время.",
             cancellationToken: ct);
     }
 
-    // ── Вспомогательные методы ───────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns the 20 EPL First Team clubs from the current standings.
-    /// Always uses standings as the source of truth — DB may contain extra teams
-    /// (cup opponents, old seasons) that must not appear here.
-    /// </summary>
     private async Task<List<(int Id, string Name)>> GetTeamsAsync(CancellationToken ct)
     {
         var standings = await football.GetStandingsAsync(ct);
-        return standings
-            .OrderBy(s => s.TeamName)
-            .Select(s => (s.TeamId, s.TeamName))
-            .ToList();
+        return standings.OrderBy(s => s.TeamName).Select(s => (s.TeamId, s.TeamName)).ToList();
     }
 
-    /// <summary>Resolves team name by ID from DB or standings cache.</summary>
     private async Task<string> ResolveTeamNameAsync(int teamId, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var team = await db.Teams.FindAsync([teamId], ct);
+        using var scope = scopeFactory.CreateScope();
+        var teamRepo    = scope.ServiceProvider.GetRequiredService<TeamRepository>();
+
+        var team = await teamRepo.GetByIdAsync(teamId, ct);
         if (team is not null) return team.Name;
 
         var standings = await football.GetStandingsAsync(ct);
@@ -411,17 +363,19 @@ public sealed class UpdateHandler(
 
     private async Task EnsureUserAsync(Telegram.Bot.Types.User from, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        if (!await db.Users.AnyAsync(u => u.TelegramId == from.Id, ct))
+        using var scope = scopeFactory.CreateScope();
+        var userRepo    = scope.ServiceProvider.GetRequiredService<UserRepository>();
+
+        var existing = await userRepo.GetByIdAsync(from.Id, ct);
+        if (existing is null)
         {
-            db.Users.Add(new Data.Entities.User
+            await userRepo.UpsertAsync(new UserDoc
             {
                 TelegramId   = from.Id,
                 Username     = from.Username,
                 FirstName    = from.FirstName,
                 RegisteredAt = DateTime.UtcNow
-            });
-            await db.SaveChangesAsync(ct);
+            }, ct);
             logger.LogInformation("New user registered: {TelegramId} (@{Username})", from.Id, from.Username);
         }
     }

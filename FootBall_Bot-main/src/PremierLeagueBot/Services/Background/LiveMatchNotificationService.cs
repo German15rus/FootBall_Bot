@@ -1,6 +1,5 @@
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Formatters;
 using PremierLeagueBot.Models.Api;
 using PremierLeagueBot.Services.Emoji;
@@ -10,14 +9,8 @@ using PremierLeagueBot.Services.Notification;
 namespace PremierLeagueBot.Services.Background;
 
 /// <summary>
-/// Background service that, while a favorite-team match is in progress,
-/// broadcasts per-event notifications to subscribers:
-///   • Goals (minute, scorer, running score with club emblems)
-///   • Yellow / red cards (minute, player, team)
-///   • Half-time summary (score + first-half scorers)
-///
-/// Polls PL API every 60 s only for matches that have at least one subscriber,
-/// and de-duplicates via the MatchEventNotifications table.
+/// Polls every 60 s for active matches and broadcasts live events (goals, cards, half-time)
+/// to users who follow one of the teams. De-duplicates via MatchEventNotification subcollection.
 /// </summary>
 public sealed class LiveMatchNotificationService(
     IServiceScopeFactory scopeFactory,
@@ -33,15 +26,9 @@ public sealed class LiveMatchNotificationService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
-            {
-                await TickAsync(stoppingToken);
-            }
+            try { await TickAsync(stoppingToken); }
             catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
-            {
-                logger.LogError(ex, "Error in LiveMatchNotificationService");
-            }
-
+                { logger.LogError(ex, "Error in LiveMatchNotificationService"); }
             await Task.Delay(CheckInterval, stoppingToken);
         }
     }
@@ -49,43 +36,31 @@ public sealed class LiveMatchNotificationService(
     private async Task TickAsync(CancellationToken ct)
     {
         using var scope   = scopeFactory.CreateScope();
-        var db            = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var matchRepo     = scope.ServiceProvider.GetRequiredService<MatchRepository>();
+        var teamRepo      = scope.ServiceProvider.GetRequiredService<TeamRepository>();
+        var userRepo      = scope.ServiceProvider.GetRequiredService<UserRepository>();
+        var eventRepo     = scope.ServiceProvider.GetRequiredService<MatchEventRepository>();
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationService>();
 
-        var now       = DateTime.UtcNow;
-        var windowLo  = now.AddHours(-3);     // catches matches that overran / extra time
-        var windowHi  = now.AddMinutes(10);   // catches matches where status lags slightly
+        var now      = DateTime.UtcNow;
+        var windowLo = now.AddHours(-3);
+        var windowHi = now.AddMinutes(10);
 
-        // Candidate matches: live, or recently kicked-off (not yet flipped to "live" in DB)
-        var candidates = await db.Matches
-            .Include(m => m.HomeTeam)
-            .Include(m => m.AwayTeam)
-            .Where(m => m.Status != "finished"
-                     && m.MatchDate >= windowLo
-                     && m.MatchDate <= windowHi)
-            .ToListAsync(ct);
-
+        var candidates = await matchRepo.GetInWindowAsync(windowLo, windowHi, ct);
         if (candidates.Count == 0) return;
 
-        // Teams that at least one user follows — we only spend API calls on those matches.
-        var favoriteTeamIds = await db.Users
-            .Where(u => u.FavoriteTeamId != null)
-            .Select(u => u.FavoriteTeamId!.Value)
-            .Distinct()
-            .ToListAsync(ct);
-
+        var favoriteTeamIds = (await userRepo.GetAllFavoriteTeamIdsAsync(ct)).ToHashSet();
         if (favoriteTeamIds.Count == 0) return;
-
-        var favoriteSet = favoriteTeamIds.ToHashSet();
 
         foreach (var match in candidates)
         {
-            if (!favoriteSet.Contains(match.HomeTeamId) &&
-                !favoriteSet.Contains(match.AwayTeamId)) continue;
+            if (!favoriteTeamIds.Contains(match.HomeTeamId) &&
+                !favoriteTeamIds.Contains(match.AwayTeamId)) continue;
 
             try
             {
-                await ProcessMatchAsync(db, notifications, match, ct);
+                var teams = await teamRepo.GetManyAsync(new[] { match.HomeTeamId, match.AwayTeamId }, ct);
+                await ProcessMatchAsync(match, teams, eventRepo, notifications, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -95,31 +70,31 @@ public sealed class LiveMatchNotificationService(
     }
 
     private async Task ProcessMatchAsync(
-        AppDbContext db,
+        MatchDoc match,
+        Dictionary<int, TeamDoc> teams,
+        MatchEventRepository eventRepo,
         NotificationService notifications,
-        Match match,
         CancellationToken ct)
     {
+        using var scope = scopeFactory.CreateScope();
+        var userRepo    = scope.ServiceProvider.GetRequiredService<UserRepository>();
+
         var events = await football.GetMatchEventsAsync(match.MatchId, ct);
         if (events.Count == 0) return;
 
-        // Already-sent event keys for this match
-        var sentKeys = await db.MatchEventNotifications
-            .Where(x => x.MatchId == match.MatchId)
-            .Select(x => x.EventKey)
-            .ToListAsync(ct);
-        var sentSet = sentKeys.ToHashSet(StringComparer.Ordinal);
-
-        var subscribers = await db.Users
-            .Where(u => u.FavoriteTeamId == match.HomeTeamId || u.FavoriteTeamId == match.AwayTeamId)
-            .Select(u => u.TelegramId)
-            .ToListAsync(ct);
+        var sentSet     = await eventRepo.GetSentKeysAsync(match.MatchId, ct);
+        var subscribers = await userRepo.GetSubscriberIdsAsync(new[] { match.HomeTeamId, match.AwayTeamId }, ct);
 
         if (subscribers.Count == 0) return;
 
-        var newLogEntries = new List<MatchEventNotification>();
+        teams.TryGetValue(match.HomeTeamId, out var homeTeam);
+        teams.TryGetValue(match.AwayTeamId, out var awayTeam);
+        var homeName = homeTeam?.Name ?? "?";
+        var awayName = awayTeam?.Name ?? "?";
 
-        // Replay events in chronological order so score-after-goal is consistent.
+        var newEvents = new List<MatchEventDoc>();
+        bool halftimeSent = match.HalftimeNotificationSent;
+
         foreach (var ev in events.OrderBy(e => e.Minute))
         {
             if (sentSet.Contains(ev.EventKey)) continue;
@@ -127,65 +102,53 @@ public sealed class LiveMatchNotificationService(
             string? message = ev.Type switch
             {
                 MatchEventType.Goal =>
-                    MatchesFormatter.FormatGoal(ev, match.HomeTeam.Name, match.AwayTeam.Name, emoji),
+                    MatchesFormatter.FormatGoal(ev, homeName, awayName, emoji),
 
                 MatchEventType.YellowCard or MatchEventType.RedCard =>
-                    MatchesFormatter.FormatCard(ev, ResolveTeamName(ev.TeamId, match)),
+                    MatchesFormatter.FormatCard(ev, ResolveTeamName(ev.TeamId, match.HomeTeamId, homeName, match.AwayTeamId, awayName)),
 
-                MatchEventType.HalfTime when !match.HalftimeNotificationSent =>
-                    BuildHalftimeMessage(ev, events, match),
+                MatchEventType.HalfTime when !halftimeSent =>
+                    BuildHalftimeMessage(ev, events, match, homeName, awayName),
 
                 _ => null
             };
 
             if (message is null) continue;
 
-            logger.LogInformation(
-                "Live event: match={MatchId} type={Type} min={Min} player={Player} → {Count} subscribers",
-                match.MatchId, ev.Type, ev.Minute, ev.PlayerName, subscribers.Count);
-
+            logger.LogInformation("Live event: match={MatchId} type={Type} min={Min}", match.MatchId, ev.Type, ev.Minute);
             await notifications.BroadcastAsync(subscribers, message, ct);
 
             if (ev.Type == MatchEventType.HalfTime)
-                match.HalftimeNotificationSent = true;
-
-            newLogEntries.Add(new MatchEventNotification
             {
-                MatchId  = match.MatchId,
-                EventKey = ev.EventKey,
-                SentAt   = DateTime.UtcNow,
-            });
+                halftimeSent = true;
+                using var innerScope = scopeFactory.CreateScope();
+                var matchRepo = innerScope.ServiceProvider.GetRequiredService<MatchRepository>();
+                await matchRepo.UpdateFieldsAsync(match.MatchId,
+                    new Dictionary<string, object?> { ["HalftimeNotificationSent"] = true }, ct);
+            }
+
+            newEvents.Add(new MatchEventDoc { MatchId = match.MatchId, EventKey = ev.EventKey, SentAt = DateTime.UtcNow });
             sentSet.Add(ev.EventKey);
         }
 
-        if (newLogEntries.Count > 0)
-        {
-            db.MatchEventNotifications.AddRange(newLogEntries);
-            await db.SaveChangesAsync(ct);
-        }
+        if (newEvents.Count > 0)
+            await eventRepo.BatchAddAsync(newEvents, ct);
     }
 
     private string BuildHalftimeMessage(
-        MatchEventDto halftimeEv,
-        IReadOnlyList<MatchEventDto> all,
-        Match match)
+        MatchEventDto halftimeEv, IReadOnlyList<MatchEventDto> all,
+        MatchDoc match, string homeName, string awayName)
     {
-        // Prefer scores captured on the HT event itself; fall back to DB snapshot.
-        var hs = halftimeEv.HomeScore ?? match.HomeScore ?? 0;
+        var hs  = halftimeEv.HomeScore ?? match.HomeScore ?? 0;
         var as_ = halftimeEv.AwayScore ?? match.AwayScore ?? 0;
-
-        var firstHalfGoals = all
-            .Where(e => e.Type == MatchEventType.Goal && e.Minute <= 45)
-            .ToList();
-
-        return MatchesFormatter.FormatHalftime(
-            hs, as_, match.HomeTeam.Name, match.AwayTeam.Name, firstHalfGoals, emoji);
+        var firstHalfGoals = all.Where(e => e.Type == MatchEventType.Goal && e.Minute <= 45).ToList();
+        return MatchesFormatter.FormatHalftime(hs, as_, homeName, awayName, firstHalfGoals, emoji);
     }
 
-    private static string ResolveTeamName(int? teamId, Match match)
+    private static string ResolveTeamName(int? teamId, int homeId, string homeName, int awayId, string awayName)
     {
-        if (teamId == match.HomeTeamId) return match.HomeTeam.Name;
-        if (teamId == match.AwayTeamId) return match.AwayTeam.Name;
+        if (teamId == homeId) return homeName;
+        if (teamId == awayId) return awayName;
         return "—";
     }
 }
