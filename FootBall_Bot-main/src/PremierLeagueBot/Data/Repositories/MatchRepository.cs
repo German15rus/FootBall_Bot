@@ -1,5 +1,6 @@
 using Google.Cloud.Firestore;
 using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Models;
 
 namespace PremierLeagueBot.Data.Repositories;
 
@@ -50,7 +51,7 @@ public sealed class MatchRepository(FirestoreDb db)
 
         return snap
             .Select(d => d.ConvertTo<MatchDoc>())
-            .Where(m => m.Status != "finished")
+            .Where(m => m.Status != MatchStatus.Finished)
             .ToList();
     }
 
@@ -58,7 +59,7 @@ public sealed class MatchRepository(FirestoreDb db)
     public async Task<List<MatchDoc>> GetScheduledBeforeAsync(DateTime from, DateTime to, CancellationToken ct = default)
     {
         var snap = await db.Collection(Col)
-            .WhereEqualTo("Status", "scheduled")
+            .WhereEqualTo("Status", MatchStatus.Scheduled)
             .WhereEqualTo("PreMatchNotificationSent", false)
             .WhereGreaterThanOrEqualTo("MatchDate", from)
             .WhereLessThanOrEqualTo("MatchDate", to)
@@ -71,7 +72,7 @@ public sealed class MatchRepository(FirestoreDb db)
     public async Task<List<MatchDoc>> GetFinishedUnnotifiedAsync(CancellationToken ct = default)
     {
         var snap = await db.Collection(Col)
-            .WhereEqualTo("Status", "finished")
+            .WhereEqualTo("Status", MatchStatus.Finished)
             .WhereEqualTo("PostMatchNotificationSent", false)
             .GetSnapshotAsync(ct);
 
@@ -82,7 +83,7 @@ public sealed class MatchRepository(FirestoreDb db)
     public async Task<List<MatchDoc>> GetFinishedWithScoresAsync(CancellationToken ct = default)
     {
         var snap = await db.Collection(Col)
-            .WhereEqualTo("Status", "finished")
+            .WhereEqualTo("Status", MatchStatus.Finished)
             .GetSnapshotAsync(ct);
 
         return snap

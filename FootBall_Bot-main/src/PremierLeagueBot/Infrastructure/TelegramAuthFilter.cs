@@ -21,6 +21,11 @@ public sealed class TelegramAuthFilter(
             var userByToken = await userRepo.GetBySessionTokenAsync(sessionToken);
             if (userByToken is not null)
             {
+                if (userByToken.SessionTokenExpiresAt.HasValue && userByToken.SessionTokenExpiresAt < DateTime.UtcNow)
+                {
+                    context.Result = new UnauthorizedObjectResult(new { error = "Session expired, please reopen the app." });
+                    return;
+                }
                 context.HttpContext.Items[CurrentUserKey] = userByToken;
                 await next();
                 return;

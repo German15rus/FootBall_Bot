@@ -149,7 +149,8 @@ try
     builder.Services.AddHostedService<PredictionScoringService>();
 
     // ── Health-check endpoint (useful for containers) ─────────────────────────
-    builder.Services.AddHealthChecks();
+    builder.Services.AddHealthChecks()
+        .AddCheck<FirestoreHealthCheck>("firestore");
 
     var app = builder.Build();
 

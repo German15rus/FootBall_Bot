@@ -1,4 +1,5 @@
 using Google.Cloud.Firestore;
+using PremierLeagueBot.Models;
 
 namespace PremierLeagueBot.Data.FirestoreModels;
 
@@ -31,7 +32,7 @@ public class MatchDoc
 
     /// <summary>scheduled | live | finished</summary>
     [FirestoreProperty]
-    public string Status { get; set; } = "scheduled";
+    public string Status { get; set; } = MatchStatus.Scheduled;
 
     /// <summary>1 = Premier League, 2 = Champions League</summary>
     [FirestoreProperty]

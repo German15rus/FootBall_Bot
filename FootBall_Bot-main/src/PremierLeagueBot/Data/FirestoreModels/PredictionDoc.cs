@@ -1,4 +1,5 @@
 using Google.Cloud.Firestore;
+using PremierLeagueBot.Models;
 
 namespace PremierLeagueBot.Data.FirestoreModels;
 
@@ -39,7 +40,7 @@ public class PredictionDoc
     public DateTime MatchDate { get; set; }
 
     [FirestoreProperty]
-    public string MatchStatus { get; set; } = "scheduled";
+    public string MatchStatus { get; set; } = Models.MatchStatus.Scheduled;
 
     [FirestoreProperty]
     public int? MatchHomeScore { get; set; }

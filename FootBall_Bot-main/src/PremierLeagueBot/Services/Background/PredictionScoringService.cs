@@ -17,6 +17,7 @@ public sealed class PredictionScoringService(
     ILogger<PredictionScoringService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
+    private readonly SemaphoreSlim _lock = new(1, 1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -34,6 +35,10 @@ public sealed class PredictionScoringService(
 
     private async Task ScoreAsync(CancellationToken ct)
     {
+        // Предотвращаем одновременный запуск двух циклов начисления очков
+        if (!await _lock.WaitAsync(0, ct)) return;
+        try
+        {
         using var scope          = scopeFactory.CreateScope();
         var matchRepo            = scope.ServiceProvider.GetRequiredService<MatchRepository>();
         var predRepo             = scope.ServiceProvider.GetRequiredService<PredictionRepository>();
@@ -68,9 +73,14 @@ public sealed class PredictionScoringService(
 
         foreach (var userId in affectedUsers)
             await achievementService.CheckAndGrantAsync(userId, ct);
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
-    private static int CalculatePoints(int predHome, int predAway, int actualHome, int actualAway)
+    internal static int CalculatePoints(int predHome, int predAway, int actualHome, int actualAway)
     {
         bool exactScore     = predHome == actualHome && predAway == actualAway;
         bool correctOutcome = Outcome(predHome, predAway) == Outcome(actualHome, actualAway);
@@ -80,6 +90,6 @@ public sealed class PredictionScoringService(
         return 3;
     }
 
-    private static char Outcome(int home, int away) =>
+    internal static char Outcome(int home, int away) =>
         home > away ? 'H' : home < away ? 'A' : 'D';
 }

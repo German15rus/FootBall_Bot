@@ -42,8 +42,9 @@ public sealed class AuthController(
                 FirstName    = parsed.FirstName,
                 Username     = parsed.Username,
                 LanguageCode = parsed.LanguageCode,
-                RegisteredAt = DateTime.UtcNow,
-                SessionToken = sessionToken
+                RegisteredAt           = DateTime.UtcNow,
+                SessionToken           = sessionToken,
+                SessionTokenExpiresAt  = DateTime.UtcNow.AddDays(30)
             };
             await userRepo.UpsertAsync(user, ct);
             await achievementService.SeedAsync(ct);
@@ -51,10 +52,11 @@ public sealed class AuthController(
         }
         else
         {
-            user.FirstName    = parsed.FirstName;
-            user.Username     = parsed.Username;
-            user.LanguageCode = parsed.LanguageCode;
-            user.SessionToken = sessionToken;
+            user.FirstName               = parsed.FirstName;
+            user.Username                = parsed.Username;
+            user.LanguageCode            = parsed.LanguageCode;
+            user.SessionToken            = sessionToken;
+            user.SessionTokenExpiresAt   = DateTime.UtcNow.AddDays(30);
             await userRepo.UpsertAsync(user, ct);
         }
 

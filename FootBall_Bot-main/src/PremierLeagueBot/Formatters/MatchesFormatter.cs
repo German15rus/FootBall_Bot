@@ -36,7 +36,7 @@ public static class MatchesFormatter
 
         if (favMatch is not null)
         {
-            var favTime = favMatch.MatchDate.ToLocalTime();
+            var favTime = TimeHelper.ToLondonTime(favMatch.MatchDate);
             sb.AppendLine("⭐ <b>Ближайший матч вашей команды</b>");
             sb.AppendLine();
             sb.AppendLine($"⚽ <b>{favMatch.HomeTeamName} vs {favMatch.AwayTeamName}</b>");
@@ -62,7 +62,7 @@ public static class MatchesFormatter
 
         sb.AppendLine("📅 <b>Ближайшие матчи Премьер-Лиги</b>");
 
-        var grouped = rest.GroupBy(m => m.MatchDate.ToLocalTime().Date);
+        var grouped = rest.GroupBy(m => TimeHelper.ToLondonTime(m.MatchDate).Date);
 
         foreach (var day in grouped)
         {
@@ -72,7 +72,7 @@ public static class MatchesFormatter
 
             foreach (var m in day)
             {
-                var time   = m.MatchDate.ToLocalTime().ToString("HH:mm");
+                var time   = TimeHelper.ToLondonTime(m.MatchDate).ToString("HH:mm");
                 var isFav  = favoriteTeamId.HasValue &&
                              (m.HomeTeamId == favoriteTeamId || m.AwayTeamId == favoriteTeamId);
                 var prefix = isFav ? "⭐ " : "⚽ ";
@@ -98,7 +98,7 @@ public static class MatchesFormatter
 
     public static string FormatResult(MatchDto m)
     {
-        var date = m.MatchDate.ToLocalTime().ToString("d MMMM, HH:mm", Ru);
+        var date = TimeHelper.ToLondonTime(m.MatchDate).ToString("d MMMM, HH:mm", Ru);
         return $"🏁 <b>Матч завершён!</b>\n\n" +
                $"⚽ <b>{m.HomeTeamName}  {m.HomeScore} – {m.AwayScore}  {m.AwayTeamName}</b>\n\n" +
                $"📅 {date}";
@@ -106,7 +106,7 @@ public static class MatchesFormatter
 
     public static string FormatReminder(MatchDto m)
     {
-        var time = m.MatchDate.ToLocalTime().ToString("HH:mm");
+        var time = TimeHelper.ToLondonTime(m.MatchDate).ToString("HH:mm");
         return $"🔔 <b>Матч начинается через 15 минут!</b>\n\n" +
                $"⚽ <b>{m.HomeTeamName}  vs  {m.AwayTeamName}</b>\n" +
                $"⏰ Начало в {time}" +

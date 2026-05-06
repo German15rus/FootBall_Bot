@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PremierLeagueBot.Data.Repositories;
+using PremierLeagueBot.Models;
 using PremierLeagueBot.Services.Football;
 
 namespace PremierLeagueBot.Controllers;
@@ -20,7 +21,7 @@ public sealed class MatchesController(
         var to            = from.AddDays(14);
         var competitionId = league.Equals("ucl", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
 
-        var matches = await matchRepo.GetUpcomingAsync(from, to, "scheduled", competitionId, ct);
+        var matches = await matchRepo.GetUpcomingAsync(from, to, MatchStatus.Scheduled, competitionId, ct);
 
         if (competitionId == 1)
         {

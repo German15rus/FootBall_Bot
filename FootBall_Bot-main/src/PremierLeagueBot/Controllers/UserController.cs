@@ -31,25 +31,23 @@ public sealed class UserController(
 
     private async Task<object> BuildProfileAsync(long telegramId, CancellationToken ct)
     {
-        // 1. User
-        var user = await userRepo.GetByIdAsync(telegramId, ct);
+        // Загружаем независимые данные параллельно
+        var userTask         = userRepo.GetByIdAsync(telegramId, ct);
+        var predictionsTask  = predRepo.GetByUserAsync(telegramId, ct);
+        var achievementsTask = achRepo.GetUserAchievementsAsync(telegramId, ct);
+        var friendsTask      = friendRepo.CountAcceptedAsync(telegramId, ct);
 
-        // 2. Favorite team
+        await Task.WhenAll(userTask, predictionsTask, achievementsTask, friendsTask);
+
+        var user           = userTask.Result;
+        var allPredictions = predictionsTask.Result;
+        var achievements   = achievementsTask.Result;
+        var friendsCount   = friendsTask.Result;
+
+        // Любимая команда — зависит от user, загружаем отдельно
         TeamDoc? favoriteTeam = null;
         if (user?.FavoriteTeamId.HasValue == true)
             favoriteTeam = await teamRepo.GetByIdAsync(user.FavoriteTeamId.Value, ct);
-
-        // 3. All predictions
-        var allPredictions = await predRepo.GetByUserAsync(telegramId, ct);
-
-        // 4. Batch-load match data for predictions needing team names
-        //    (already denormalized in PredictionDoc — no extra reads needed)
-
-        // 5. Achievements
-        var achievements = await achRepo.GetUserAchievementsAsync(telegramId, ct);
-
-        // 6. Friends count
-        var friendsCount = await friendRepo.CountAcceptedAsync(telegramId, ct);
 
         // Stats from scored predictions
         var scored         = allPredictions.Where(p => p.IsScored).ToList();

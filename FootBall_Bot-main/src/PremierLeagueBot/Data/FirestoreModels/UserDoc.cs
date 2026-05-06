@@ -32,6 +32,9 @@ public class UserDoc
     [FirestoreProperty]
     public string? SessionToken { get; set; }
 
+    [FirestoreProperty]
+    public DateTime? SessionTokenExpiresAt { get; set; }
+
     /// <summary>Lowercase copy of Username for case-insensitive lookup.</summary>
     [FirestoreProperty]
     public string? UsernameLower { get; set; }

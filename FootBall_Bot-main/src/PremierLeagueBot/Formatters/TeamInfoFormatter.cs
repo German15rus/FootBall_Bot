@@ -93,7 +93,7 @@ public static class TeamInfoFormatter
             var resultWord  = GetResultWord(ourScore, oppScore);
             var resultEmoji = GetResultIcon(ourScore, oppScore);
 
-            var dateStr = m.MatchDate.ToLocalTime().ToString("d MMMM yyyy", Ru);
+            var dateStr = TimeHelper.ToLondonTime(m.MatchDate).ToString("d MMMM yyyy", Ru);
             var score   = (m.HomeScore.HasValue && m.AwayScore.HasValue)
                 ? $"{m.HomeScore} - {m.AwayScore}"
                 : "— - —";

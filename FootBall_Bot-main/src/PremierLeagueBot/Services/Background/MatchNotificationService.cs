@@ -15,6 +15,7 @@ public sealed class MatchNotificationService(
     ILogger<MatchNotificationService> logger) : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
+    private readonly SemaphoreSlim _lock = new(1, 1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -31,6 +32,10 @@ public sealed class MatchNotificationService(
 
     private async Task CheckAndNotifyAsync(CancellationToken ct)
     {
+        // Пропускаем тик, если предыдущий ещё не завершился
+        if (!await _lock.WaitAsync(0, ct)) return;
+        try
+        {
         using var scope   = scopeFactory.CreateScope();
         var matchRepo     = scope.ServiceProvider.GetRequiredService<MatchRepository>();
         var teamRepo      = scope.ServiceProvider.GetRequiredService<TeamRepository>();
@@ -75,6 +80,11 @@ public sealed class MatchNotificationService(
 
             await matchRepo.UpdateFieldsAsync(match.MatchId,
                 new Dictionary<string, object?> { ["PostMatchNotificationSent"] = true }, ct);
+        }
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 

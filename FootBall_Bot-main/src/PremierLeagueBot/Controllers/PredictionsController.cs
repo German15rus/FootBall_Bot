@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using PremierLeagueBot.Data.FirestoreModels;
 using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Infrastructure;
+using PremierLeagueBot.Models;
 using Serilog;
 
 namespace PremierLeagueBot.Controllers;
@@ -35,7 +36,7 @@ public sealed class PredictionsController(
             if (match is null)
                 return NotFound(new { error = "Match not found" });
 
-            if (match.Status != "scheduled")
+            if (match.Status != MatchStatus.Scheduled)
                 return UnprocessableEntity(new { error = "Match has already started or finished" });
 
             if (DateTime.UtcNow >= match.MatchDate)
