@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Infrastructure;
 
 namespace PremierLeagueBot.Controllers;
@@ -9,72 +8,69 @@ namespace PremierLeagueBot.Controllers;
 [ApiController]
 [Route("api/friends")]
 [ServiceFilter(typeof(TelegramAuthFilter))]
-public sealed class FriendsController(IDbContextFactory<AppDbContext> dbFactory) : ControllerBase
+public sealed class FriendsController(
+    FriendshipRepository friendRepo,
+    UserRepository userRepo) : ControllerBase
 {
-    private User CurrentUser => (User)HttpContext.Items[TelegramAuthFilter.CurrentUserKey]!;
+    private UserDoc CurrentUser => (UserDoc)HttpContext.Items[TelegramAuthFilter.CurrentUserKey]!;
 
-    /// <summary>Returns accepted friends of the current user.</summary>
     [HttpGet]
     public async Task<IActionResult> GetFriends(CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var me = CurrentUser.TelegramId;
+        var me          = CurrentUser.TelegramId;
+        var friendships = await friendRepo.GetAcceptedAsync(me, ct);
 
-        var friendships = await db.Friendships
-            .Include(f => f.Requester)
-            .Include(f => f.Addressee)
-            .Where(f => (f.RequesterId == me || f.AddresseeId == me) && f.Status == "accepted")
-            .ToListAsync(ct);
+        var friendIds = friendships
+            .Select(f => f.RequesterId == me ? f.AddresseeId : f.RequesterId)
+            .Distinct()
+            .ToList();
 
-        var friends = friendships.Select(f =>
-        {
-            var friend = f.RequesterId == me ? f.Addressee : f.Requester;
-            return new
+        var userMap = await userRepo.GetManyAsync(friendIds, ct);
+
+        return Ok(friendIds
+            .Where(id => userMap.ContainsKey(id))
+            .Select(id => userMap[id])
+            .Select(u => new
             {
-                telegramId = friend.TelegramId,
-                firstName  = friend.FirstName,
-                username   = friend.Username,
-                avatarUrl  = friend.AvatarUrl
-            };
-        });
-
-        return Ok(friends);
+                telegramId = u.TelegramId,
+                firstName  = u.FirstName,
+                username   = u.Username,
+                avatarUrl  = u.AvatarUrl
+            }));
     }
 
-    /// <summary>Returns incoming pending friend requests.</summary>
     [HttpGet("requests")]
     public async Task<IActionResult> GetRequests(CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var me = CurrentUser.TelegramId;
+        var me       = CurrentUser.TelegramId;
+        var requests = await friendRepo.GetPendingRequestsAsync(me, ct);
 
-        var requests = await db.Friendships
-            .Include(f => f.Requester)
-            .Where(f => f.AddresseeId == me && f.Status == "pending")
-            .OrderByDescending(f => f.CreatedAt)
-            .ToListAsync(ct);
+        var requesterIds = requests.Select(f => f.RequesterId).Distinct().ToList();
+        var userMap      = await userRepo.GetManyAsync(requesterIds, ct);
 
-        return Ok(requests.Select(f => new
-        {
-            id         = f.Id,
-            telegramId = f.Requester.TelegramId,
-            firstName  = f.Requester.FirstName,
-            username   = f.Requester.Username,
-            avatarUrl  = f.Requester.AvatarUrl
-        }));
+        return Ok(requests
+            .Where(f => userMap.ContainsKey(f.RequesterId))
+            .Select(f =>
+            {
+                var u = userMap[f.RequesterId];
+                return new
+                {
+                    // id = requesterId so frontend can pass it to accept/decline endpoints
+                    id         = f.RequesterId,
+                    telegramId = u.TelegramId,
+                    firstName  = u.FirstName,
+                    username   = u.Username,
+                    avatarUrl  = u.AvatarUrl
+                };
+            }));
     }
 
-    /// <summary>Sends a friend request to a user found by @username.</summary>
     [HttpPost("request/{username}")]
     public async Task<IActionResult> SendRequest(string username, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var me = CurrentUser.TelegramId;
-
+        var me        = CurrentUser.TelegramId;
         var cleanName = username.TrimStart('@').ToLower();
-        var target = await db.Users
-            .FirstOrDefaultAsync(u => u.Username != null &&
-                u.Username.ToLower() == cleanName, ct);
+        var target    = await userRepo.GetByUsernameLowerAsync(cleanName, ct);
 
         if (target is null)
             return NotFound(new { error = "Пользователь не найден" });
@@ -82,61 +78,49 @@ public sealed class FriendsController(IDbContextFactory<AppDbContext> dbFactory)
         if (target.TelegramId == me)
             return BadRequest(new { error = "Нельзя добавить себя" });
 
-        var existing = await db.Friendships.FirstOrDefaultAsync(
-            f => (f.RequesterId == me && f.AddresseeId == target.TelegramId) ||
-                 (f.RequesterId == target.TelegramId && f.AddresseeId == me), ct);
-
+        var existing = await friendRepo.FindExistingAsync(me, target.TelegramId, ct);
         if (existing is not null)
         {
-            var errorMsg = existing.Status == "accepted"
-                ? "Уже в друзьях"
-                : "Заявка уже отправлена";
-            return Conflict(new { error = errorMsg });
+            var msg = existing.Status == "accepted" ? "Уже в друзьях" : "Заявка уже отправлена";
+            return Conflict(new { error = msg });
         }
 
-        db.Friendships.Add(new Friendship
+        await friendRepo.CreateAsync(new FriendshipDoc
         {
             RequesterId = me,
-            AddresseeId = target.TelegramId
-        });
+            AddresseeId = target.TelegramId,
+            Status      = "pending",
+            CreatedAt   = DateTime.UtcNow
+        }, ct);
 
-        await db.SaveChangesAsync(ct);
         return Ok(new { message = "Заявка отправлена" });
     }
 
-    /// <summary>Accepts an incoming friend request.</summary>
-    [HttpPost("accept/{id:int}")]
-    public async Task<IActionResult> AcceptRequest(int id, CancellationToken ct)
+    /// <summary>Accept the pending request from requesterId.</summary>
+    [HttpPost("accept/{requesterId:long}")]
+    public async Task<IActionResult> AcceptRequest(long requesterId, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var me = CurrentUser.TelegramId;
+        var me         = CurrentUser.TelegramId;
+        var friendship = await friendRepo.GetAsync(requesterId, me, ct);
 
-        var friendship = await db.Friendships
-            .FirstOrDefaultAsync(f => f.Id == id && f.AddresseeId == me && f.Status == "pending", ct);
-
-        if (friendship is null)
+        if (friendship is null || friendship.Status != "pending")
             return NotFound(new { error = "Заявка не найдена" });
 
-        friendship.Status = "accepted";
-        await db.SaveChangesAsync(ct);
+        await friendRepo.AcceptAsync(requesterId, me, ct);
         return Ok(new { message = "Заявка принята" });
     }
 
-    /// <summary>Declines and removes an incoming friend request.</summary>
-    [HttpPost("decline/{id:int}")]
-    public async Task<IActionResult> DeclineRequest(int id, CancellationToken ct)
+    /// <summary>Decline the pending request from requesterId.</summary>
+    [HttpPost("decline/{requesterId:long}")]
+    public async Task<IActionResult> DeclineRequest(long requesterId, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var me = CurrentUser.TelegramId;
+        var me         = CurrentUser.TelegramId;
+        var friendship = await friendRepo.GetAsync(requesterId, me, ct);
 
-        var friendship = await db.Friendships
-            .FirstOrDefaultAsync(f => f.Id == id && f.AddresseeId == me && f.Status == "pending", ct);
-
-        if (friendship is null)
+        if (friendship is null || friendship.Status != "pending")
             return NotFound(new { error = "Заявка не найдена" });
 
-        db.Friendships.Remove(friendship);
-        await db.SaveChangesAsync(ct);
+        await friendRepo.DeleteAsync(requesterId, me, ct);
         return Ok(new { message = "Заявка отклонена" });
     }
 }

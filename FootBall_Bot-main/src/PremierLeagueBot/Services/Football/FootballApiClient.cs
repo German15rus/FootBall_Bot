@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using PremierLeagueBot.Infrastructure;
+using PremierLeagueBot.Models;
 using PremierLeagueBot.Models.Api;
 
 namespace PremierLeagueBot.Services.Football;
@@ -105,7 +106,7 @@ public sealed class FootballApiClient : IFootballApiClient
             return _opts.ClSeasonId;
         }
 
-        const int fallbackId = 737; // 2024/25 CL
+        var fallbackId = _opts.ClFallbackSeasonId;
         try
         {
             var client = _factory.CreateClient(PlApiClient);
@@ -164,7 +165,7 @@ public sealed class FootballApiClient : IFootballApiClient
             return _opts.SeasonId;
         }
 
-        const int fallbackId = 719; // 2024/25 — last known fallback
+        var fallbackId = _opts.PlFallbackSeasonId;
         try
         {
             var client = _factory.CreateClient(PlApiClient);
@@ -746,9 +747,9 @@ public sealed class FootballApiClient : IFootballApiClient
     /// <summary>Maps PL API status codes to internal status strings.</summary>
     private static string MapPlStatus(string raw) => raw.ToUpperInvariant() switch
     {
-        "C"                   => "finished",    // Completed
-        "L" or "H" or "ET"   => "live",         // Live / Half-time / Extra-time
-        _                     => "scheduled"    // M = upcoming, U = TBD, etc.
+        "C"                   => MatchStatus.Finished,   // Completed
+        "L" or "H" or "ET"   => MatchStatus.Live,        // Live / Half-time / Extra-time
+        _                     => MatchStatus.Scheduled   // M = upcoming, U = TBD, etc.
     };
 
     // ── JSON parse helpers ───────────────────────────────────────────────────

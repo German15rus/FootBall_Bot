@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Infrastructure;
 
 namespace PremierLeagueBot.Controllers;
@@ -9,83 +8,107 @@ namespace PremierLeagueBot.Controllers;
 [ApiController]
 [Route("api/user")]
 [ServiceFilter(typeof(TelegramAuthFilter))]
-public sealed class UserController(IDbContextFactory<AppDbContext> dbFactory) : ControllerBase
+public sealed class UserController(
+    UserRepository userRepo,
+    TeamRepository teamRepo,
+    PredictionRepository predRepo,
+    AchievementRepository achRepo,
+    FriendshipRepository friendRepo) : ControllerBase
 {
-    private User CurrentUser => (User)HttpContext.Items[TelegramAuthFilter.CurrentUserKey]!;
+    private UserDoc CurrentUser => (UserDoc)HttpContext.Items[TelegramAuthFilter.CurrentUserKey]!;
 
-    /// <summary>Returns the authenticated user's full profile.</summary>
     [HttpGet("me")]
     public async Task<IActionResult> GetMe(CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        return Ok(await BuildProfileAsync(db, CurrentUser.TelegramId, ct));
-    }
+        => Ok(await BuildProfileAsync(CurrentUser.TelegramId, ct));
 
-    /// <summary>Returns a public profile (game stats + achievements only).</summary>
     [HttpGet("{telegramId:long}")]
     public async Task<IActionResult> GetPublic(long telegramId, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var user = await db.Users.FindAsync([telegramId], ct);
+        var user = await userRepo.GetByIdAsync(telegramId, ct);
         if (user is null) return NotFound();
-        return Ok(await BuildProfileAsync(db, telegramId, ct));
+        return Ok(await BuildProfileAsync(telegramId, ct));
     }
 
-    private static async Task<object> BuildProfileAsync(AppDbContext db, long telegramId, CancellationToken ct)
+    private async Task<object> BuildProfileAsync(long telegramId, CancellationToken ct)
     {
-        var user = await db.Users
-            .Include(u => u.FavoriteTeam)
-            .FirstAsync(u => u.TelegramId == telegramId, ct);
+        // Загружаем независимые данные параллельно
+        var userTask         = userRepo.GetByIdAsync(telegramId, ct);
+        var predictionsTask  = predRepo.GetByUserAsync(telegramId, ct);
+        var achievementsTask = achRepo.GetUserAchievementsAsync(telegramId, ct);
+        var friendsTask      = friendRepo.CountAcceptedAsync(telegramId, ct);
 
-        var predictions = await db.Predictions
-            .Include(p => p.Match).ThenInclude(m => m.HomeTeam)
-            .Include(p => p.Match).ThenInclude(m => m.AwayTeam)
-            .Where(p => p.TelegramId == telegramId && p.IsScored)
-            .OrderByDescending(p => p.Match.MatchDate)
-            .Take(10)
-            .ToListAsync(ct);
+        await Task.WhenAll(userTask, predictionsTask, achievementsTask, friendsTask);
 
-        var activePredictions = await db.Predictions
-            .Include(p => p.Match).ThenInclude(m => m.HomeTeam)
-            .Include(p => p.Match).ThenInclude(m => m.AwayTeam)
-            .Where(p => p.TelegramId == telegramId && !p.IsScored)
-            .OrderBy(p => p.Match.MatchDate)
-            .ToListAsync(ct);
+        var user           = userTask.Result;
+        var allPredictions = predictionsTask.Result;
+        var achievements   = achievementsTask.Result;
+        var friendsCount   = friendsTask.Result;
 
-        var achievements = await db.UserAchievements
-            .Include(ua => ua.Achievement)
-            .Where(ua => ua.TelegramId == telegramId)
-            .OrderBy(ua => ua.EarnedAt)
-            .ToListAsync(ct);
+        // Любимая команда — зависит от user, загружаем отдельно
+        TeamDoc? favoriteTeam = null;
+        if (user?.FavoriteTeamId.HasValue == true)
+            favoriteTeam = await teamRepo.GetByIdAsync(user.FavoriteTeamId.Value, ct);
 
-        var totalPoints   = predictions.Sum(p => p.PointsAwarded ?? 0);
-        var totalOutcomes = predictions.Count(p => (p.PointsAwarded ?? 0) > 0);
-        var exactScores   = predictions.Count(p => (p.PointsAwarded ?? 0) >= 3);
-        var totalScored   = predictions.Count;
-        var outcomeRate   = totalScored > 0 ? Math.Round(totalOutcomes * 100.0 / totalScored, 1) : 0;
-        var exactRate     = totalScored > 0 ? Math.Round(exactScores   * 100.0 / totalScored, 1) : 0;
+        // Stats from scored predictions
+        var scored         = allPredictions.Where(p => p.IsScored).ToList();
+        var totalPoints    = scored.Sum(p => p.PointsAwarded ?? 0);
+        var totalOutcomes  = scored.Count(p => (p.PointsAwarded ?? 0) > 0);
+        var exactScores    = scored.Count(p => (p.PointsAwarded ?? 0) >= 3);
+        var totalScored    = scored.Count;
+        var outcomeRate    = totalScored > 0 ? Math.Round(totalOutcomes * 100.0 / totalScored, 1) : 0;
+        var exactRate      = totalScored > 0 ? Math.Round(exactScores   * 100.0 / totalScored, 1) : 0;
 
-        // Perfect week = ISO week where ALL predictions are exact (≥ 3 predictions)
-        var perfectWeeks = predictions
-            .GroupBy(p => System.Globalization.ISOWeek.GetWeekOfYear(p.Match.MatchDate))
+        var perfectWeeks = scored
+            .GroupBy(p => System.Globalization.ISOWeek.GetWeekOfYear(p.MatchDate))
             .Count(g => g.Count() >= 3 && g.All(p => (p.PointsAwarded ?? 0) >= 3));
 
-        var friendsCount = await db.Friendships
-            .CountAsync(f => (f.RequesterId == telegramId || f.AddresseeId == telegramId)
-                          && f.Status == "accepted", ct);
+        var history = scored
+            .OrderByDescending(p => p.MatchDate)
+            .Take(10)
+            .Select(p => new
+            {
+                matchId       = p.MatchId,
+                matchDate     = p.MatchDate,
+                homeTeam      = p.HomeTeamName,
+                awayTeam      = p.AwayTeamName,
+                homeEmblem    = p.HomeTeamEmblem,
+                awayEmblem    = p.AwayTeamEmblem,
+                predictedHome = p.PredictedHomeScore,
+                predictedAway = p.PredictedAwayScore,
+                actualHome    = p.MatchHomeScore,
+                actualAway    = p.MatchAwayScore,
+                pointsAwarded = p.PointsAwarded,
+                updatedAt     = p.UpdatedAt
+            });
+
+        var activePredictions = allPredictions
+            .Where(p => !p.IsScored)
+            .OrderBy(p => p.MatchDate)
+            .Select(p => new
+            {
+                matchId       = p.MatchId,
+                matchDate     = p.MatchDate,
+                homeTeam      = p.HomeTeamName,
+                awayTeam      = p.AwayTeamName,
+                homeEmblem    = p.HomeTeamEmblem,
+                awayEmblem    = p.AwayTeamEmblem,
+                predictedHome = p.PredictedHomeScore,
+                predictedAway = p.PredictedAwayScore,
+                matchStatus   = p.MatchStatus
+            });
 
         return new
         {
-            telegramId   = user.TelegramId,
+            telegramId   = user!.TelegramId,
             firstName    = user.FirstName,
             username     = user.Username,
             avatarUrl    = user.AvatarUrl,
             registeredAt = user.RegisteredAt,
-            favoriteTeam = user.FavoriteTeam is null ? null : new
+            favoriteTeam = favoriteTeam is null ? null : new
             {
-                id       = user.FavoriteTeam.TeamId,
-                name     = user.FavoriteTeam.Name,
-                emblemUrl= user.FavoriteTeam.EmblemUrl
+                id        = favoriteTeam.TeamId,
+                name      = favoriteTeam.Name,
+                emblemUrl = favoriteTeam.EmblemUrl
             },
             friendsCount,
             stats = new
@@ -100,41 +123,16 @@ public sealed class UserController(IDbContextFactory<AppDbContext> dbFactory) : 
             },
             achievements = achievements.Select(ua => new
             {
-                code        = ua.AchievementCode,
-                nameRu      = ua.Achievement.NameRu,
-                nameEn      = ua.Achievement.NameEn,
-                descriptionRu = ua.Achievement.DescriptionRu,
-                descriptionEn = ua.Achievement.DescriptionEn,
-                icon        = ua.Achievement.Icon,
-                earnedAt    = ua.EarnedAt
+                code          = ua.AchievementCode,
+                nameRu        = ua.NameRu,
+                nameEn        = ua.NameEn,
+                descriptionRu = ua.DescriptionRu,
+                descriptionEn = ua.DescriptionEn,
+                icon          = ua.Icon,
+                earnedAt      = ua.EarnedAt
             }),
-            history = predictions.Select(p => new
-            {
-                matchId          = p.MatchId,
-                matchDate        = p.Match.MatchDate,
-                homeTeam         = p.Match.HomeTeam.Name,
-                awayTeam         = p.Match.AwayTeam.Name,
-                homeEmblem       = p.Match.HomeTeam.EmblemUrl,
-                awayEmblem       = p.Match.AwayTeam.EmblemUrl,
-                predictedHome    = p.PredictedHomeScore,
-                predictedAway    = p.PredictedAwayScore,
-                actualHome       = p.Match.HomeScore,
-                actualAway       = p.Match.AwayScore,
-                pointsAwarded    = p.PointsAwarded,
-                updatedAt        = p.UpdatedAt
-            }),
-            activePredictions = activePredictions.Select(p => new
-            {
-                matchId       = p.MatchId,
-                matchDate     = p.Match.MatchDate,
-                homeTeam      = p.Match.HomeTeam.Name,
-                awayTeam      = p.Match.AwayTeam.Name,
-                homeEmblem    = p.Match.HomeTeam.EmblemUrl,
-                awayEmblem    = p.Match.AwayTeam.EmblemUrl,
-                predictedHome = p.PredictedHomeScore,
-                predictedAway = p.PredictedAwayScore,
-                matchStatus   = p.Match.Status
-            })
+            history,
+            activePredictions
         };
     }
 }

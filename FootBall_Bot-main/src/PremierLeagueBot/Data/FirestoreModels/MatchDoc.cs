@@ -1,30 +1,49 @@
-namespace PremierLeagueBot.Data.Entities;
+using Google.Cloud.Firestore;
+using PremierLeagueBot.Models;
 
-public class Match
+namespace PremierLeagueBot.Data.FirestoreModels;
+
+[FirestoreData]
+public class MatchDoc
 {
+    [FirestoreDocumentId]
+    public string DocId { get; set; } = "";
+
+    [FirestoreProperty]
     public int MatchId { get; set; }
+
+    [FirestoreProperty]
     public int HomeTeamId { get; set; }
+
+    [FirestoreProperty]
     public int AwayTeamId { get; set; }
+
+    [FirestoreProperty]
     public DateTime MatchDate { get; set; }
+
+    [FirestoreProperty]
     public string? Stadium { get; set; }
+
+    [FirestoreProperty]
     public int? HomeScore { get; set; }
+
+    [FirestoreProperty]
     public int? AwayScore { get; set; }
 
     /// <summary>scheduled | live | finished</summary>
-    public string Status { get; set; } = "scheduled";
+    [FirestoreProperty]
+    public string Status { get; set; } = MatchStatus.Scheduled;
 
     /// <summary>1 = Premier League, 2 = Champions League</summary>
+    [FirestoreProperty]
     public int CompetitionId { get; set; } = 1;
 
-    /// <summary>Flag: pre-match notification already sent</summary>
+    [FirestoreProperty]
     public bool PreMatchNotificationSent { get; set; }
 
-    /// <summary>Flag: post-match notification already sent</summary>
+    [FirestoreProperty]
     public bool PostMatchNotificationSent { get; set; }
 
-    /// <summary>Flag: half-time notification already sent</summary>
+    [FirestoreProperty]
     public bool HalftimeNotificationSent { get; set; }
-
-    public Team HomeTeam { get; set; } = null!;
-    public Team AwayTeam { get; set; } = null!;
 }

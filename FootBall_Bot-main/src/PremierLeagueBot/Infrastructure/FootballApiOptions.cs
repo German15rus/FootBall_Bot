@@ -18,6 +18,9 @@ public sealed class FootballApiOptions
     /// </summary>
     public int SeasonId { get; set; } = 0;
 
+    /// <summary>Fallback PL season ID used when API is unreachable and auto-detect fails.</summary>
+    public int PlFallbackSeasonId { get; set; } = 719;
+
     // ── Champions League ──────────────────────────────────────────────────────
     /// <summary>Champions League competition ID in the PL API.</summary>
     public int ClCompetitionId { get; set; } = 2;
@@ -27,6 +30,9 @@ public sealed class FootballApiOptions
     /// Example: 813 = 2025/26.
     /// </summary>
     public int ClSeasonId { get; set; } = 0;
+
+    /// <summary>Fallback CL season ID used when API is unreachable and auto-detect fails.</summary>
+    public int ClFallbackSeasonId { get; set; } = 737;
 
     // ── TheSportsDB (fallback for squad data) ─────────────────────────────────
     /// <summary>TheSportsDB base URL (free, no key required).</summary>

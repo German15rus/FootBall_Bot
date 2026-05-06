@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using PremierLeagueBot.Data;
-using PremierLeagueBot.Data.Entities;
+using PremierLeagueBot.Data.FirestoreModels;
+using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Infrastructure;
 using PremierLeagueBot.Services.Achievements;
 using PremierLeagueBot.Services.TelegramAvatar;
@@ -11,16 +10,12 @@ namespace PremierLeagueBot.Controllers;
 [ApiController]
 [Route("api/auth")]
 public sealed class AuthController(
-    IDbContextFactory<AppDbContext> dbFactory,
+    UserRepository userRepo,
     AvatarService avatarService,
     AchievementService achievementService,
     IConfiguration configuration,
     ILogger<AuthController> logger) : ControllerBase
 {
-    /// <summary>
-    /// Validates Telegram initData, creates/updates user, refreshes avatar.
-    /// Called once when the Mini App opens.
-    /// </summary>
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
@@ -36,37 +31,35 @@ public sealed class AuthController(
         if (parsed.TelegramId == 0)
             return Unauthorized(new { error = "Could not parse user from initData" });
 
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var user = await db.Users.FindAsync([parsed.TelegramId], ct);
-
+        var user = await userRepo.GetByIdAsync(parsed.TelegramId, ct);
         var sessionToken = Guid.NewGuid().ToString("N");
 
         if (user is null)
         {
-            user = new User
+            user = new UserDoc
             {
                 TelegramId   = parsed.TelegramId,
                 FirstName    = parsed.FirstName,
                 Username     = parsed.Username,
                 LanguageCode = parsed.LanguageCode,
-                RegisteredAt = DateTime.UtcNow,
-                SessionToken = sessionToken
+                RegisteredAt           = DateTime.UtcNow,
+                SessionToken           = sessionToken,
+                SessionTokenExpiresAt  = DateTime.UtcNow.AddDays(30)
             };
-            db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
+            await userRepo.UpsertAsync(user, ct);
             await achievementService.SeedAsync(ct);
             logger.LogInformation("MiniApp login: new user {Id}", parsed.TelegramId);
         }
         else
         {
-            user.FirstName    = parsed.FirstName;
-            user.Username     = parsed.Username;
-            user.LanguageCode = parsed.LanguageCode;
-            user.SessionToken = sessionToken;
-            await db.SaveChangesAsync(ct);
+            user.FirstName               = parsed.FirstName;
+            user.Username                = parsed.Username;
+            user.LanguageCode            = parsed.LanguageCode;
+            user.SessionToken            = sessionToken;
+            user.SessionTokenExpiresAt   = DateTime.UtcNow.AddDays(30);
+            await userRepo.UpsertAsync(user, ct);
         }
 
-        // Refresh avatar in background (fire-and-forget; non-blocking)
         _ = avatarService.RefreshAvatarAsync(parsed.TelegramId);
 
         return Ok(new
