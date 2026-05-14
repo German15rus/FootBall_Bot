@@ -129,8 +129,7 @@ const i18n = (() => {
   let lang = 'ru';
 
   function init() {
-    const tgLang = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code;
-    lang = (tgLang && tgLang.startsWith('ru')) ? 'ru' : 'en';
+    lang = 'ru';
     applyAll();
   }
 
