@@ -103,16 +103,30 @@ try
 
     // ── Firestore ─────────────────────────────────────────────────────────────
     {
-        var credPath = builder.Configuration["Firestore:CredentialsPath"];
-        if (!string.IsNullOrEmpty(credPath) && File.Exists(credPath))
-            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS",
-                Path.GetFullPath(credPath));
-
         var projectId = builder.Configuration["Firestore:ProjectId"]
             ?? throw new InvalidOperationException(
                 "Firestore:ProjectId is not configured. Set it in appsettings.json.");
 
-        var firestoreDb = FirestoreDb.Create(projectId);
+        var credJson = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+        var credPath = builder.Configuration["Firestore:CredentialsPath"];
+
+        FirestoreDb firestoreDb;
+        if (!string.IsNullOrEmpty(credJson))
+        {
+            var credential = Google.Apis.Auth.OAuth2.GoogleCredential.FromJson(credJson)
+                .CreateScoped("https://www.googleapis.com/auth/datastore");
+            firestoreDb = new FirestoreDbBuilder { ProjectId = projectId, Credential = credential }.Build();
+        }
+        else if (!string.IsNullOrEmpty(credPath) && File.Exists(credPath))
+        {
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Path.GetFullPath(credPath));
+            firestoreDb = FirestoreDb.Create(projectId);
+        }
+        else
+        {
+            firestoreDb = FirestoreDb.Create(projectId);
+        }
+
         builder.Services.AddSingleton(firestoreDb);
     }
 
