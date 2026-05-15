@@ -28,7 +28,8 @@ public sealed class TeamsController(IFootballApiClient football) : ControllerBas
                     playerId = p.PlayerId,
                     name     = p.Name,
                     number   = p.Number,
-                    position = p.Position
+                    position = p.Position,
+                    photoUrl = p.PhotoUrl
                 }),
             recentMatches = recent.Select(m => new
             {

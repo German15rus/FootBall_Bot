@@ -54,13 +54,20 @@ const TeamModal = (() => {
       const pb = posOrder[b.position] ?? 9;
       return pa !== pb ? pa - pb : a.number - b.number;
     });
-    document.getElementById('modal-squad').innerHTML = sorted.map(p =>
-      `<div class="player-row">
+    document.getElementById('modal-squad').innerHTML = sorted.map(p => {
+      const initial = (p.name || '?')[0].toUpperCase();
+      const photoEl = p.photoUrl
+        ? `<img class="player-photo" src="${escHtml(p.photoUrl)}" alt=""
+               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+           <div class="player-photo-ph" style="display:none">${initial}</div>`
+        : `<div class="player-photo-ph">${initial}</div>`;
+      return `<div class="player-row">
         <div class="player-number">${p.number || '–'}</div>
+        <div class="player-photo-wrap">${photoEl}</div>
         <div class="player-name">${escHtml(p.name)}</div>
         <div class="player-pos">${escHtml(p.position)}</div>
-       </div>`
-    ).join('');
+       </div>`;
+    }).join('');
   }
 
   function renderRecent(matches, teamId) {
@@ -104,14 +111,35 @@ const Router = (() => {
   let _loaded  = {};
 
   function go(tab) {
-    if (!tabs.includes(tab)) return;
+    if (!tabs.includes(tab) || tab === _current) return;
+
+    const prevTab = _current;
     _current = tab;
 
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    const prevIdx = tabs.indexOf(prevTab);
+    const nextIdx = tabs.indexOf(tab);
+    const goingRight = nextIdx > prevIdx;
+
+    const prevEl = document.getElementById(`tab-${prevTab}`);
+    const nextEl = document.getElementById(`tab-${tab}`);
+
+    // Remove any leftover animation classes
+    const animClasses = ['tab-slide-in-right','tab-slide-in-left','tab-slide-out-left','tab-slide-out-right'];
+    [prevEl, nextEl].forEach(el => el && el.classList.remove(...animClasses));
+
+    // Show next tab behind the outgoing one, then animate
+    nextEl.classList.add('active');
+    nextEl.classList.add(goingRight ? 'tab-slide-in-right' : 'tab-slide-in-left');
+    if (prevEl) prevEl.classList.add(goingRight ? 'tab-slide-out-left' : 'tab-slide-out-right');
+
+    setTimeout(() => {
+      if (prevEl) { prevEl.classList.remove('active'); prevEl.classList.remove(...animClasses); }
+      nextEl.classList.remove(...animClasses);
+    }, 230);
+
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
-    document.getElementById(`tab-${tab}`).classList.add('active');
 
     if (!_loaded[tab]) {
       _loaded[tab] = true;
@@ -126,7 +154,17 @@ const Router = (() => {
     if (tab === 'profile')     ProfileTab.load();
   }
 
-  return { go };
+  function init(tab) {
+    _current = tab;
+    document.getElementById(`tab-${tab}`).classList.add('active');
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    _loaded[tab] = true;
+    loadTab(tab);
+  }
+
+  return { go, init };
 })();
 
 // ── Boot ────────────────────────────────────────────────────────────────────
@@ -174,10 +212,10 @@ const Router = (() => {
   const viewUser = params.get('user');
 
   if (viewUser) {
-    Router.go('profile');
+    Router.init('profile');
     ProfileTab.load(viewUser);
   } else {
-    Router.go('standings');
+    Router.init('standings');
   }
 
   // Login in background — registers user and refreshes session token

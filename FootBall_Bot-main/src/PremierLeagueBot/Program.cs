@@ -171,9 +171,16 @@ try
     // ── Seed achievement definitions on startup ───────────────────────────────
     using (var scope = app.Services.CreateScope())
     {
-        var achievements = scope.ServiceProvider.GetRequiredService<AchievementService>();
-        await achievements.SeedAsync();
-        Log.Information("Achievement definitions seeded");
+        try
+        {
+            var achievements = scope.ServiceProvider.GetRequiredService<AchievementService>();
+            await achievements.SeedAsync();
+            Log.Information("Achievement definitions seeded");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Achievement seed skipped: {Message}", ex.Message);
+        }
     }
 
     app.MapHealthChecks("/health");

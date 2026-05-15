@@ -5,5 +5,6 @@ public record PlayerDto(
     int TeamId,
     string Name,
     int Number,
-    string Position
+    string Position,
+    string PhotoUrl = ""
 );

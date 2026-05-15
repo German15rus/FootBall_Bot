@@ -1,3 +1,4 @@
+using Grpc.Core;
 using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Services.Achievements;
 
@@ -27,6 +28,8 @@ public sealed class PredictionScoringService(
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await ScoreAsync(stoppingToken); }
+            catch (Grpc.Core.RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.ResourceExhausted)
+                { logger.LogWarning("PredictionScoringService: Firestore quota exceeded, will retry"); }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 { logger.LogError(ex, "Error in PredictionScoringService"); }
             await Task.Delay(Interval, stoppingToken);

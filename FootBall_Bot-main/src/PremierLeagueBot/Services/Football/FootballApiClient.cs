@@ -275,12 +275,22 @@ public sealed class FootballApiClient : IFootballApiClient
 
                 if (teamId == 0 || string.IsNullOrEmpty(teamName)) continue;
 
+                // Badge URL from altIds.opta (e.g. "t3" → .../badges/t3.svg)
+                string? emblemUrl = null;
+                if (teamEl.TryGetProperty("altIds", out var altIds) &&
+                    altIds.TryGetProperty("opta", out var optaId))
+                {
+                    var opta = optaId.GetString();
+                    if (!string.IsNullOrEmpty(opta))
+                        emblemUrl = $"https://resources.premierleague.com/premierleague/badges/{opta}.svg";
+                }
+
                 result.Add(new StandingDto(
                     Rank:           ParseInt(entry, "position"),
                     TeamId:         teamId,
                     TeamName:       teamName,
                     ShortName:      abbr,
-                    EmblemUrl:      null,
+                    EmblemUrl:      emblemUrl,
                     Played:         ParseInt(overall, "played"),
                     Won:            ParseInt(overall, "won"),
                     Drawn:          ParseInt(overall, "drawn"),
@@ -334,12 +344,14 @@ public sealed class FootballApiClient : IFootballApiClient
                 if (string.IsNullOrEmpty(shortName))
                     shortName = Abbr(teamName);
 
+                var badge = row.TryGetProperty("strBadge", out var b) ? b.GetString() : null;
+
                 result.Add(new StandingDto(
                     Rank:           ParseInt(row, "intRank"),
                     TeamId:         0,
                     TeamName:       teamName,
                     ShortName:      shortName,
-                    EmblemUrl:      null,
+                    EmblemUrl:      badge,
                     Played:         ParseInt(row, "intPlayed"),
                     Won:            ParseInt(row, "intWin"),
                     Drawn:          ParseInt(row, "intDraw"),
@@ -572,12 +584,18 @@ public sealed class FootballApiClient : IFootballApiClient
             var isFirstTeam = (shirtNum >= 1 && shirtNum <= 45) || appearances > 0;
             if (!isFirstTeam) continue;
 
+            var photoUrl = "";
+            if (p.TryGetProperty("headshot", out var hs) &&
+                hs.TryGetProperty("url", out var hsUrl))
+                photoUrl = hsUrl.GetString() ?? "";
+
             result.Add(new PlayerDto(
                 PlayerId: ParseInt(p, "id"),
                 TeamId:   teamId,
                 Name:     name,
                 Number:   shirtNum,
-                Position: MapPlPosition(posCode)
+                Position: MapPlPosition(posCode),
+                PhotoUrl: photoUrl
             ));
         }
 

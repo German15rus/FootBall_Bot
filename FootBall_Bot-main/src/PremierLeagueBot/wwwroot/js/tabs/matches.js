@@ -14,10 +14,9 @@ const MatchesTab = (() => {
   }
 
   function teamHtml(team, side) {
-    const ph = `<div class="match-emblem-ph">${(team.name||'?').substring(0,3).toUpperCase()}</div>`;
     const img = team.emblemUrl
-      ? `<img class="match-emblem" src="${team.emblemUrl}" alt="${escHtml(team.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">${ph}`
-      : ph;
+      ? `<img class="match-emblem" src="${team.emblemUrl}" alt="" onerror="this.style.display='none'">`
+      : '';
     const name = `<span>${escHtml(team.name)}</span>`;
     return side === 'left'
       ? `<div class="match-team">${img}${name}</div>`

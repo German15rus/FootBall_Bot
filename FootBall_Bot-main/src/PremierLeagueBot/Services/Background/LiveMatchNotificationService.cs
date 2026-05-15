@@ -1,3 +1,4 @@
+using Grpc.Core;
 using PremierLeagueBot.Data.FirestoreModels;
 using PremierLeagueBot.Data.Repositories;
 using PremierLeagueBot.Formatters;
@@ -27,6 +28,8 @@ public sealed class LiveMatchNotificationService(
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await TickAsync(stoppingToken); }
+            catch (RpcException ex) when (ex.StatusCode == StatusCode.ResourceExhausted)
+                { logger.LogWarning("LiveMatchNotificationService: Firestore quota exceeded, will retry"); }
             catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                 { logger.LogError(ex, "Error in LiveMatchNotificationService"); }
             await Task.Delay(CheckInterval, stoppingToken);
