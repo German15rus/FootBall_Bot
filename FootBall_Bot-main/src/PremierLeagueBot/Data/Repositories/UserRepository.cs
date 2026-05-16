@@ -1,10 +1,12 @@
 using Google.Cloud.Firestore;
+using Microsoft.Extensions.Caching.Memory;
 using PremierLeagueBot.Data.FirestoreModels;
 
 namespace PremierLeagueBot.Data.Repositories;
 
-public sealed class UserRepository(FirestoreDb db)
+public sealed class UserRepository(FirestoreDb db, IMemoryCache cache)
 {
+    private const string FavoriteTeamIdsCacheKey = "all_favorite_team_ids";
     private const string Col = "users";
 
     public async Task<UserDoc?> GetByIdAsync(long telegramId, CancellationToken ct = default)
@@ -45,20 +47,26 @@ public sealed class UserRepository(FirestoreDb db)
         return snap.Select(d => d.ConvertTo<UserDoc>().TelegramId).Distinct().ToList();
     }
 
-    /// <summary>Returns distinct FavoriteTeamIds across all users (nulls excluded).</summary>
+    /// <summary>Returns distinct FavoriteTeamIds across all users (nulls excluded). Cached for 10 minutes.</summary>
     public async Task<List<int>> GetAllFavoriteTeamIdsAsync(CancellationToken ct = default)
     {
+        if (cache.TryGetValue(FavoriteTeamIdsCacheKey, out List<int>? cached) && cached is not null)
+            return cached;
+
         var snap = await db.Collection(Col)
             .WhereGreaterThan("FavoriteTeamId", 0)
             .Select("FavoriteTeamId")
             .GetSnapshotAsync(ct);
 
-        return snap
+        var result = snap
             .Select(d => d.ConvertTo<UserDoc>().FavoriteTeamId)
             .Where(id => id.HasValue)
             .Select(id => id!.Value)
             .Distinct()
             .ToList();
+
+        cache.Set(FavoriteTeamIdsCacheKey, result, TimeSpan.FromMinutes(10));
+        return result;
     }
 
     public async Task<Dictionary<long, UserDoc>> GetManyAsync(IEnumerable<long> telegramIds, CancellationToken ct = default)

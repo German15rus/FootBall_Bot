@@ -79,11 +79,13 @@ public sealed class MatchRepository(FirestoreDb db)
         return snap.Select(d => d.ConvertTo<MatchDoc>()).ToList();
     }
 
-    /// <summary>Returns all finished matches (for scoring unscored predictions).</summary>
+    /// <summary>Returns finished matches from the last 7 days (for scoring unscored predictions).</summary>
     public async Task<List<MatchDoc>> GetFinishedWithScoresAsync(CancellationToken ct = default)
     {
+        var cutoff = DateTime.UtcNow.AddDays(-7);
         var snap = await db.Collection(Col)
             .WhereEqualTo("Status", MatchStatus.Finished)
+            .WhereGreaterThanOrEqualTo("MatchDate", cutoff)
             .GetSnapshotAsync(ct);
 
         return snap
